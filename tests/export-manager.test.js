@@ -250,6 +250,30 @@ void helper() { // helper note
     vi.runOnlyPendingTimers();
   });
 
+  it("loads the async PDF exporter and leaves the circuit model unchanged", async () => {
+    const circuit = createCircuitModel({ getItem: () => null, setItem: () => {} });
+    const component = circuit.addComponent("led").component;
+    circuit.addWire("arduino:D13", `${component.id}:anode`);
+    const before = circuit.getState();
+    const { svg, diagram } = renderSource("void setup() { pinMode(13, OUTPUT); }");
+    const pdf = createPdfStub();
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:async-pdf");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    const pending = exportPdf(svg, diagram.bounds, "setup", {
+      sections: { diagram: true, components: true, connections: true },
+      components: circuit.getComponents(),
+      wires: circuit.getWires(),
+    }, () => pdf, renderPdfStub);
+    expect(pending).toBeInstanceOf(Promise);
+    const result = await pending;
+
+    expect(result.blob.type).toBe("application/pdf");
+    expect(circuit.getState()).toEqual(before);
+    expect(pdf.output).toHaveBeenCalledWith("blob");
+  });
+
   it("uses only the implemented shapes and combines equivalent parallelograms", () => {
     const switchSource = `void setup() {
   switch (readValue()) {
@@ -394,7 +418,7 @@ void helper() { // helper note
           author: "No especificado",
           date: "2026-11-01",
           description: "Control de un LED",
-          version: "v0.9.3",
+          version: "v0.9.4",
         },
         sections: { diagram: true, code: true, circuit: true, components: true, connections: true },
         sourceCode: longCode,
@@ -418,7 +442,7 @@ void helper() { // helper note
     const allText = pdf.text.mock.calls.flatMap(([value]) => Array.isArray(value) ? value : [value]).join(" ");
     expect(allText).toContain("Luz de prueba");
     expect(allText).toContain("No especificado");
-    expect(allText).toContain("v0.9.3");
+    expect(allText).toContain("v0.9.4");
     expect(allText).toContain("D13");
     expect(allText).toContain("R1");
     expect(allText).toContain("220 Ω");

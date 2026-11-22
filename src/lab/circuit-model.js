@@ -11,6 +11,7 @@ import {
 const STORAGE_KEY = "arduino-flowchart-circuit";
 const CIRCUIT_VERSION = 2;
 const LEGACY_CIRCUIT_VERSION = 1;
+const MAX_HISTORY = 30;
 const DIGITAL_PINS = new Set(getArduinoTerminals()
   .filter((terminal) => terminal.kind === "digital")
   .map((terminal) => terminal.id));
@@ -55,6 +56,25 @@ function componentTerminalIds(component) {
 
 function cloneValue(value) {
   return structuredClone(value);
+}
+
+function statesEqual(first, second) {
+  return JSON.stringify(first) === JSON.stringify(second);
+}
+
+function historyChangeType(before, after) {
+  if (!statesEqual(before.components, after.components)) return "topology";
+  const wireEndpoints = (wires) => wires.map(({ id, from, to }) => ({ id, from, to }));
+  if (!statesEqual(wireEndpoints(before.wires), wireEndpoints(after.wires))) return "topology";
+  return "visual";
+}
+
+function nextAvailableId(state) {
+  return Math.max(
+    1,
+    ...state.components.map((component) => Number(component.id.match(/\d+$/)?.[0] ?? 0) + 1),
+    ...state.wires.map((wire) => Number(wire.id.match(/\d+$/)?.[0] ?? 0) + 1),
+  );
 }
 
 function setRecordValue(record, key, value) {
@@ -250,6 +270,9 @@ export function resistorBands(ohms, bandCount = 4, tolerance = 5) {
 export function createCircuitModel(storage = globalThis.localStorage, onError = () => {}) {
   let state = { version: CIRCUIT_VERSION, components: [], visual: { positions: {} }, wires: [] };
   let nextId = 1;
+  const past = [];
+  const future = [];
+  const listeners = new Set();
   if (storage) {
     try {
       const saved = storage.getItem(STORAGE_KEY);
@@ -260,11 +283,7 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
         else {
           state = parsed;
           if (savedCircuit.version !== CIRCUIT_VERSION) persist("visual");
-          nextId = Math.max(
-            1,
-            ...state.components.map((component) => Number(component.id.match(/\d+$/)?.[0] ?? 0) + 1),
-            ...state.wires.map((wire) => Number(wire.id.match(/\d+$/)?.[0] ?? 0) + 1),
-          );
+          nextId = nextAvailableId(state);
         }
       }
     } catch (error) {
@@ -292,9 +311,36 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
     return changeType;
   }
 
-  function update(changeType = "topology") {
+  function update(changeType = "topology", before = null, recordHistory = true) {
+    const changed = before === null || !statesEqual(before, state);
+    if (before !== null && changed) {
+      if (recordHistory && ["topology", "visual"].includes(changeType)) {
+        past.push(cloneValue(before));
+        if (past.length > MAX_HISTORY) past.shift();
+        future.length = 0;
+      } else {
+        future.length = 0;
+      }
+    }
     persist(changeType);
-    return { state: snapshot(), changeType };
+    const change = { state: snapshot(), changeType };
+    if (changed) {
+      for (const listener of listeners) {
+        try {
+          listener({ ...change, state: cloneValue(change.state) });
+        } catch (error) {
+          onError(error);
+        }
+      }
+    }
+    return change;
+  }
+
+  function restoreHistoryState(target) {
+    const before = snapshot();
+    state = cloneValue(target);
+    nextId = Math.max(nextId, nextAvailableId(state));
+    return update(historyChangeType(before, state));
   }
 
   function createInitialInputs() {
@@ -308,6 +354,26 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
 
   return {
     getState: snapshot,
+    canUndo: () => past.length > 0,
+    canRedo: () => future.length > 0,
+    undo() {
+      if (!past.length) return false;
+      const target = past.pop();
+      future.push(snapshot());
+      return restoreHistoryState(target);
+    },
+    redo() {
+      if (!future.length) return false;
+      const target = future.pop();
+      past.push(snapshot());
+      if (past.length > MAX_HISTORY) past.shift();
+      return restoreHistoryState(target);
+    },
+    subscribe(listener) {
+      if (typeof listener !== "function") throw new TypeError("El suscriptor debe ser una función.");
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
     getComponents: () => state.components.map(componentForConsumer),
     getVisualState: () => cloneValue(state.visual),
     getComponentPosition(id) {
@@ -319,18 +385,19 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
     addComponent(type) {
       if (!isComponentType(type)) throw new TypeError("Tipo de componente desconocido.");
       if (state.components.length >= 12) throw new RangeError("El montaje admite hasta 12 componentes.");
+      const before = snapshot();
       const component = createComponent(`component-${nextId++}`, type);
       state.components.push(component);
       state.visual.positions[component.id] = initialPosition(state.components.length - 1);
-      return { component: componentForConsumer(component), ...update("topology") };
+      return { component: componentForConsumer(component), ...update("topology", before) };
     },
     removeComponent(id) {
-      const before = state.components.length;
+      if (!state.components.some((component) => component.id === id)) return null;
+      const before = snapshot();
       state.components = state.components.filter((component) => component.id !== id);
-      if (before === state.components.length) return null;
       delete state.visual.positions[id];
       state.wires = state.wires.filter((wire) => !wire.from.startsWith(`${id}:`) && !wire.to.startsWith(`${id}:`));
-      return update("topology");
+      return update("topology", before);
     },
     setComponentPosition(id, position) {
       if (!state.components.some((component) => component.id === id)) {
@@ -339,14 +406,16 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
       if (!validPosition(position)) {
         throw new RangeError("La posición debe estar dentro de los límites del montaje.");
       }
+      const before = snapshot();
       state.visual.positions[id] = { x: position.x, y: position.y };
-      return { position: { ...state.visual.positions[id] }, ...update("visual") };
+      return { position: { ...state.visual.positions[id] }, ...update("visual", before) };
     },
     addWire(from, to) {
       validateWireEndpoints(state, from, to);
+      const before = snapshot();
       const wire = { id: `wire-${nextId++}`, from, to };
       state.wires.push(wire);
-      return { wire: cloneValue(wire), ...update("topology") };
+      return { wire: cloneValue(wire), ...update("topology", before) };
     },
     updateWireEndpoint(wireId, side, newEndpoint) {
       const wire = state.wires.find((item) => item.id === wireId);
@@ -357,18 +426,20 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
       const from = side === "from" ? newEndpoint : wire.from;
       const to = side === "to" ? newEndpoint : wire.to;
       validateWireEndpoints(state, from, to, wireId);
+      const before = snapshot();
       wire[side] = newEndpoint;
-      return { wire: cloneValue(wire), ...update("topology") };
+      return { wire: cloneValue(wire), ...update("topology", before) };
     },
     removeWire(id) {
-      const previousLength = state.wires.length;
+      if (!state.wires.some((wire) => wire.id === id)) return null;
+      const before = snapshot();
       state.wires = state.wires.filter((wire) => wire.id !== id);
-      if (state.wires.length === previousLength) return null;
-      return update("topology");
+      return update("topology", before);
     },
     updateProperty(id, name, value) {
       const component = state.components.find((item) => item.id === id);
       if (!component) throw new Error("El componente seleccionado ya no existe.");
+      const before = snapshot();
       if (component.type === "led" && name === "color" && ["rojo", "verde", "amarillo", "azul"].includes(value)) {
         component.properties.color = value;
       } else if (component.type === "resistor" && name === "ohms" && resistorValues.includes(Number(value))) {
@@ -379,26 +450,27 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
         component.properties.tolerance = Number(value);
       } else if (component.type === "button" && name === "pressed" && typeof value === "boolean") {
         component.properties.pressed = value;
-        return { ...update("input"), component: componentForConsumer(component) };
+        return { ...update("input", before, false), component: componentForConsumer(component) };
       } else if (component.type === "potentiometer" && name === "value") {
         const parsed = Number(value);
         if (!Number.isInteger(parsed) || parsed < 0 || parsed > 1023) throw new RangeError("El valor debe estar entre 0 y 1023.");
         component.properties.value = parsed;
-        return { ...update("input"), component: componentForConsumer(component) };
+        return { ...update("input", before, false), component: componentForConsumer(component) };
       } else {
         throw new TypeError("Propiedad de componente no válida.");
       }
-      return { ...update("topology"), component: componentForConsumer(component) };
+      return { ...update("topology", before), component: componentForConsumer(component) };
     },
     loadDemo() {
+      const before = snapshot();
       state = createDemoCircuit();
-      nextId = 10;
-      return update("topology");
+      nextId = Math.max(nextId, 10);
+      return update("topology", before);
     },
     clear() {
+      const before = snapshot();
       state = { version: CIRCUIT_VERSION, components: [], visual: { positions: {} }, wires: [] };
-      nextId = 1;
-      return update("topology");
+      return update("topology", before);
     },
     getEndpoints() {
       const endpoints = [

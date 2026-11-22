@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   circuitStorageKey,
   createCircuitModel,
@@ -329,5 +329,164 @@ describe("circuit model", () => {
       { id: "wire-4", from: "component-1:lead2", to: "component-2:anode" },
       { id: "wire-5", from: "component-2:cathode", to: "arduino:GND" },
     ]);
+  });
+
+  describe("undo / redo", () => {
+    it("starts empty and makes empty undo/redo safe without notifying subscribers", () => {
+      const model = createCircuitModel(createMemoryStorage());
+      const listener = vi.fn();
+      model.subscribe(listener);
+
+      expect(model.canUndo()).toBe(false);
+      expect(model.canRedo()).toBe(false);
+      expect(model.undo()).toBe(false);
+      expect(model.redo()).toBe(false);
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it("undoes and redoes wire creation, endpoint edits, and removal with persistence and notifications", () => {
+      const storage = createMemoryStorage();
+      const model = createCircuitModel(storage);
+      const led = model.addComponent("led").component;
+      const first = model.addWire("arduino:D13", `${led.id}:anode`).wire;
+      const notifications = [];
+      model.subscribe((change) => notifications.push(change));
+
+      const second = model.addWire(`${led.id}:cathode`, "arduino:GND").wire;
+      expect(model.canUndo()).toBe(true);
+      expect(model.undo()).toMatchObject({ changeType: "topology" });
+      expect(model.getWires()).toEqual([first]);
+      expect(model.canRedo()).toBe(true);
+      expect(JSON.parse(storage.getItem(circuitStorageKey)).wires).toEqual([first]);
+      expect(model.redo()).toMatchObject({ changeType: "topology" });
+      expect(model.getWires()).toEqual([first, second]);
+
+      model.updateWireEndpoint(second.id, "to", "arduino:D2");
+      expect(model.undo()).toMatchObject({ changeType: "topology" });
+      expect(model.getWires().find(({ id }) => id === second.id).to).toBe("arduino:GND");
+      expect(model.redo()).toMatchObject({ changeType: "topology" });
+      expect(model.getWires().find(({ id }) => id === second.id).to).toBe("arduino:D2");
+
+      model.removeWire(second.id);
+      expect(model.undo()).toMatchObject({ changeType: "topology" });
+      expect(model.getWires().find(({ id }) => id === second.id)).toEqual({
+        id: second.id,
+        from: `${led.id}:cathode`,
+        to: "arduino:D2",
+      });
+      expect(model.redo()).toMatchObject({ changeType: "topology" });
+      expect(model.getWires()).toEqual([first]);
+      expect(notifications.map(({ changeType }) => changeType))
+        .toEqual(Array(9).fill("topology"));
+      expect(JSON.parse(storage.getItem(circuitStorageKey)).wires).toEqual([first]);
+    });
+
+    it("restores component additions, removals, and cascaded wires", () => {
+      const model = createCircuitModel(createMemoryStorage());
+      const led = model.addComponent("led").component;
+      const firstWire = model.addWire("arduino:D13", `${led.id}:anode`).wire;
+      const secondWire = model.addWire(`${led.id}:cathode`, "arduino:GND").wire;
+      const beforeRemoval = model.getState();
+
+      model.removeComponent(led.id);
+      expect(model.getWires()).toEqual([]);
+      expect(model.undo()).toMatchObject({ changeType: "topology" });
+      expect(model.getState()).toEqual(beforeRemoval);
+      expect(model.redo()).toMatchObject({ changeType: "topology" });
+      expect(model.getComponents()).toEqual([]);
+      expect(model.getWires()).toEqual([]);
+
+      const button = model.addComponent("button").component;
+      expect(button.id).not.toBe(led.id);
+      expect(model.undo()).toMatchObject({ changeType: "topology" });
+      expect(model.getComponents()).toEqual([]);
+      expect(model.redo()).toMatchObject({ changeType: "topology" });
+      expect(model.getComponents()[0].id).toBe(button.id);
+      expect([firstWire.id, secondWire.id]).toEqual(["wire-2", "wire-3"]);
+    });
+
+    it("undoes and redoes component movement as visual changes and ignores repeated positions", () => {
+      const model = createCircuitModel(createMemoryStorage({
+        [circuitStorageKey]: JSON.stringify(createDemoCircuit()),
+      }));
+      const initial = model.getComponentPosition("component-2");
+      const notifications = [];
+      model.subscribe((change) => notifications.push(change));
+
+      model.setComponentPosition("component-2", { x: 680, y: 330 });
+      expect(model.setComponentPosition("component-2", { x: 680, y: 330 }).changeType).toBe("visual");
+      expect(model.undo()).toMatchObject({ changeType: "visual" });
+      expect(model.getComponentPosition("component-2")).toEqual(initial);
+      expect(model.canUndo()).toBe(false);
+      expect(model.canRedo()).toBe(true);
+      expect(model.redo()).toMatchObject({ changeType: "visual" });
+      expect(model.getComponentPosition("component-2")).toEqual({ x: 680, y: 330 });
+      expect(notifications.map(({ changeType }) => changeType)).toEqual(["visual", "visual", "visual"]);
+    });
+
+    it("truncates the redo branch after a new change but preserves it across rejected and no-op operations", () => {
+      const model = createCircuitModel(createMemoryStorage());
+      const led = model.addComponent("led").component;
+      const wire = model.addWire("arduino:D13", `${led.id}:anode`).wire;
+      model.addWire("arduino:D12", `${led.id}:cathode`);
+      model.undo();
+      expect(model.canRedo()).toBe(true);
+      expect(() => model.addWire(`${led.id}:anode`, "arduino:D13")).toThrow("ya están conectados");
+      expect(() => model.updateWireEndpoint(wire.id, "from", `${led.id}:anode`))
+        .toThrow("terminales distintos y válidos");
+      expect(model.removeWire("missing-wire")).toBeNull();
+      expect(model.canRedo()).toBe(true);
+      expect(model.canUndo()).toBe(true);
+
+      model.addWire("arduino:D3", `${led.id}:cathode`);
+      expect(model.canRedo()).toBe(false);
+    });
+
+    it("keeps at most 30 undo steps", () => {
+      const model = createCircuitModel(createMemoryStorage());
+      for (let index = 0; index < 20; index += 1) {
+        const component = model.addComponent("led").component;
+        model.removeComponent(component.id);
+      }
+
+      let undone = 0;
+      while (model.undo()) undone += 1;
+      expect(undone).toBe(30);
+      expect(model.canUndo()).toBe(false);
+      expect(model.redo()).toMatchObject({ changeType: "topology" });
+      expect(model.canUndo()).toBe(true);
+    });
+
+    it("does not reuse component or wire IDs after undoing their creation", () => {
+      const model = createCircuitModel(createMemoryStorage());
+      const firstComponent = model.addComponent("led").component;
+      model.undo();
+      const secondComponent = model.addComponent("led").component;
+      expect(secondComponent.id).not.toBe(firstComponent.id);
+
+      const firstWire = model.addWire("arduino:D13", `${secondComponent.id}:anode`).wire;
+      model.undo();
+      const secondWire = model.addWire("arduino:D12", `${secondComponent.id}:cathode`).wire;
+      expect(secondWire.id).not.toBe(firstWire.id);
+      expect(new Set([secondComponent.id, secondWire.id]).size).toBe(2);
+    });
+
+    it("makes clearing and loading the demo reversible", () => {
+      const model = createCircuitModel(createMemoryStorage());
+      model.addComponent("button");
+      const beforeClear = model.getState();
+      model.clear();
+      expect(model.undo()).toMatchObject({ changeType: "topology" });
+      expect(model.getState()).toEqual(beforeClear);
+      expect(model.redo()).toMatchObject({ changeType: "topology" });
+      expect(model.getComponents()).toEqual([]);
+
+      model.loadDemo();
+      expect(model.getComponents()).toHaveLength(2);
+      expect(model.undo()).toMatchObject({ changeType: "topology" });
+      expect(model.getComponents()).toEqual([]);
+      expect(model.redo()).toMatchObject({ changeType: "topology" });
+      expect(model.getWires()).toHaveLength(3);
+    });
   });
 });

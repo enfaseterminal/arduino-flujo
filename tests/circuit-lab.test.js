@@ -4,8 +4,8 @@ import { circuitStorageKey, createCircuitModel } from "../src/lab/circuit-model.
 import { createCircuitLab } from "../src/lab/circuit-lab.js";
 import { getComponentTerminals } from "../src/lab/circuit-catalog.js";
 
-function createMemoryStorage() {
-  const entries = new Map();
+function createMemoryStorage(initial = {}) {
+  const entries = new Map(Object.entries(initial));
   return {
     getItem: (key) => entries.get(key) ?? null,
     setItem: (key, value) => entries.set(key, value),
@@ -430,6 +430,122 @@ describe("circuit lab interface", () => {
     expect(root.querySelector(".circuit-wire.is-selected")).toBeNull();
     expect(root.querySelector(".circuit-component.is-selected")).toBeNull();
     expect(lab.getModel().getWires()).toHaveLength(2);
+  });
+
+  it("deletes a selected wire with Delete or Backspace and preserves wires while editing text", () => {
+    for (const key of ["Delete", "Backspace"]) {
+      const root = createRoot();
+      const model = createCircuitModel(createMemoryStorage());
+      model.loadDemo();
+      createCircuitLab(root, model);
+      const selectedWireId = model.getWires()[2].id;
+      const originalIds = model.getWires().map(({ id }) => id);
+      root.querySelector(`[data-select-wire="${selectedWireId}"]`).click();
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      root.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(model.getWires().map(({ id }) => id)).toEqual(originalIds.slice(0, 2));
+      expect(root.querySelector(".circuit-wire.is-selected")).toBeNull();
+      root.remove();
+    }
+
+    for (const tag of ["input", "textarea"]) {
+      const root = createRoot();
+      const model = createCircuitModel(createMemoryStorage());
+      model.loadDemo();
+      createCircuitLab(root, model);
+      root.querySelector('[data-select-wire="wire-3"]').click();
+      const editor = document.createElement(tag);
+      root.append(editor);
+      editor.focus();
+      const event = new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true });
+      editor.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(model.getWires()).toHaveLength(3);
+      root.remove();
+    }
+  });
+
+  it("connects Undo and Redo buttons and Ctrl/Cmd keyboard shortcuts to model history", () => {
+    const root = createRoot();
+    const model = createCircuitModel(createMemoryStorage());
+    const lab = createCircuitLab(root, model);
+    const undo = root.querySelector("[data-circuit-undo]");
+    const redo = root.querySelector("[data-circuit-redo]");
+    expect(undo.disabled).toBe(true);
+    expect(redo.disabled).toBe(true);
+
+    model.addComponent("led");
+    lab.render();
+    expect(undo.disabled).toBe(false);
+    const undoEvent = new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true, cancelable: true });
+    root.dispatchEvent(undoEvent);
+    expect(undoEvent.defaultPrevented).toBe(true);
+    expect(model.getComponents()).toHaveLength(0);
+    expect(redo.disabled).toBe(false);
+
+    const redoEvent = new KeyboardEvent("keydown", { key: "y", ctrlKey: true, bubbles: true, cancelable: true });
+    root.dispatchEvent(redoEvent);
+    expect(redoEvent.defaultPrevented).toBe(true);
+    expect(model.getComponents()).toHaveLength(1);
+    expect(undo.disabled).toBe(false);
+
+    root.querySelector("[data-circuit-undo]").click();
+    expect(model.getComponents()).toHaveLength(0);
+    root.querySelector("[data-circuit-redo]").click();
+    expect(model.getComponents()).toHaveLength(1);
+  });
+
+  it("offsets coincident wires while keeping their endpoints anchored", () => {
+    const seed = {
+      version: 2,
+      components: [{ id: "component-1", type: "led", properties: { color: "rojo" } }],
+      visual: { positions: { "component-1": { x: 650, y: 220 } } },
+      wires: [
+        { id: "wire-1", from: "arduino:D13", to: "component-1:anode" },
+        { id: "wire-2", from: "arduino:D13", to: "component-1:anode" },
+        { id: "wire-3", from: "arduino:D13", to: "component-1:anode" },
+      ],
+    };
+    const root = createRoot();
+    const model = createCircuitModel(createMemoryStorage({ [circuitStorageKey]: JSON.stringify(seed) }));
+    createCircuitLab(root, model);
+    const paths = [...root.querySelectorAll(".circuit-wire")];
+    expect(new Set(paths.map((path) => path.getAttribute("d"))).size).toBe(3);
+    for (const path of paths) {
+      expect(path.getAttribute("d")).toMatch(/^M 254 280 C/);
+      expect(path.getAttribute("d")).toMatch(/ 631 220$/);
+    }
+  });
+
+  it("marks unknown wire endpoints and lets the user repair or delete the orphan", () => {
+    const seed = {
+      version: 2,
+      components: [{ id: "component-1", type: "led", properties: { color: "rojo" } }],
+      visual: { positions: { "component-1": { x: 650, y: 220 } } },
+      wires: [{ id: "wire-1", from: "future-1:signal", to: "component-1:anode" }],
+    };
+    const root = createRoot();
+    const model = createCircuitModel(createMemoryStorage({ [circuitStorageKey]: JSON.stringify(seed) }));
+    createCircuitLab(root, model);
+    expect(root.querySelector('[data-wire-id="wire-1"].circuit-wire').classList.contains("is-invalid")).toBe(true);
+    expect(root.querySelector('[data-select-wire="wire-1"]').getAttribute("aria-label")).toContain("Extremo desconocido");
+    expect(root.querySelector(".circuit-wire-warning-label").textContent).toContain("Extremo desconocido");
+
+    root.querySelector('[data-select-wire="wire-1"]').click();
+    const side = root.querySelector("[data-wire-edit-side]");
+    side.value = "from";
+    side.dispatchEvent(new Event("change", { bubbles: true }));
+    const endpoint = root.querySelector("[data-wire-edit-endpoint]");
+    endpoint.value = "arduino:D13";
+    endpoint.dispatchEvent(new Event("change", { bubbles: true }));
+    root.querySelector("[data-confirm-wire-edit]").click();
+    expect(model.getWires()).toEqual([{ id: "wire-1", from: "arduino:D13", to: "component-1:anode" }]);
+    expect(root.querySelector('[data-wire-id="wire-1"].circuit-wire').classList.contains("is-invalid")).toBe(false);
+
+    root.querySelector('[data-select-wire="wire-1"]').click();
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }));
+    expect(model.getWires()).toHaveLength(0);
   });
 
   it("exports a styled clone of the actual laboratory SVG without changing the displayed mount", () => {

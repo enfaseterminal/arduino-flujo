@@ -201,6 +201,80 @@ describe("circuit lab simulation integration", () => {
     expect(topologyChanges).toHaveLength(3);
   });
 
+  it.each([
+    ["addWire", (circuit) => circuit.addWire("arduino:D2", "component-1:lead1")],
+    ["updateWireEndpoint", (circuit) => circuit.updateWireEndpoint(circuit.getWires()[0].id, "from", "arduino:D12")],
+    ["removeWire", (circuit) => circuit.removeWire(circuit.getWires()[0].id)],
+    ["addComponent", (circuit) => circuit.addComponent("potentiometer")],
+    ["removeComponent", (circuit) => circuit.removeComponent("component-2")],
+  ])("undo and redo of %s restore topology, storage, and a fresh simulation", (_name, mutate) => {
+    const storage = createStorage();
+    const circuit = createCircuitModel(storage);
+    circuit.loadDemo();
+    mutate(circuit);
+    const source = "void setup() { pinMode(13, OUTPUT); digitalWrite(13, HIGH); }";
+    let engine = createEngine(source, circuit);
+    engine.start();
+    engine.stepForward();
+    const topologyChanges = [];
+    const root = createLabRoot();
+    const lab = createCircuitLab(root, circuit, {
+      onChange(change) {
+        if (change.changeType === "visual" || change.changeType === "input") return;
+        topologyChanges.push(change);
+        engine = createEngine(source, circuit);
+      },
+    });
+
+    root.querySelector("[data-circuit-undo]").click();
+    expect(topologyChanges.at(-1).changeType).toBe("topology");
+    expect(engine.state).toMatchObject({ status: "idle", pins: {}, serialOutput: "" });
+    expect(JSON.parse(storage.getItem("arduino-flowchart-circuit"))).toEqual(circuit.getState());
+    const undoneState = circuit.getState();
+
+    const redo = new KeyboardEvent("keydown", { key: "y", ctrlKey: true, bubbles: true, cancelable: true });
+    root.dispatchEvent(redo);
+    expect(redo.defaultPrevented).toBe(true);
+    expect(topologyChanges.at(-1).changeType).toBe("topology");
+    expect(circuit.getState()).not.toEqual(undoneState);
+    expect(engine.state).toMatchObject({ status: "idle", pins: {}, serialOutput: "" });
+    expect(JSON.parse(storage.getItem("arduino-flowchart-circuit"))).toEqual(circuit.getState());
+    expect(topologyChanges).toHaveLength(2);
+    lab.render();
+    root.remove();
+  });
+
+  it("keeps the running simulation and reversible steps when visual moves are undone or redone", () => {
+    const circuit = createCircuitModel(createStorage());
+    circuit.loadDemo();
+    const source = "void setup() { Serial.begin(9600); Serial.println(7); }";
+    let engine = createEngine(source, circuit);
+    engine.start();
+    engine.stepForward();
+    const originalEngine = engine;
+    const originalState = engine.getState();
+    const originalHistoryLength = engine.history.length;
+    const visualChanges = [];
+    const root = createLabRoot();
+    const lab = createCircuitLab(root, circuit, {
+      onChange(change) {
+        visualChanges.push(change.changeType);
+        if (change.changeType !== "visual") engine = createEngine(source, circuit);
+      },
+    });
+
+    lab.setComponentPosition("component-2", { x: 700, y: 340 });
+    root.querySelector("[data-circuit-undo]").click();
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+
+    expect(visualChanges).toEqual(["visual", "visual", "visual"]);
+    expect(engine).toBe(originalEngine);
+    expect(engine.getState()).toEqual(originalState);
+    expect(engine.history).toHaveLength(originalHistoryLength);
+    expect(circuit.getComponentPosition("component-2")).toEqual({ x: 700, y: 340 });
+    root.remove();
+  });
+
   it("uses a connected potentiometer value for analogRead", () => {
     const circuit = createCircuitModel(createStorage());
     const potentiometer = circuit.addComponent("potentiometer").component;

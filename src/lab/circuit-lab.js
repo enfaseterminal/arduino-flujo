@@ -107,8 +107,47 @@ function pointerPosition(canvas, event) {
   };
 }
 
-function wirePath(from, to) {
-  return `M ${from.x} ${from.y} C ${(from.x + to.x) / 2} ${from.y}, ${(from.x + to.x) / 2} ${to.y}, ${to.x} ${to.y}`;
+function wirePath(from, to, offset = 0) {
+  const rawDx = to.x - from.x;
+  const rawDy = to.y - from.y;
+  const length = Math.hypot(rawDx, rawDy);
+  const dx = length ? rawDx / length : 1;
+  const dy = length ? rawDy / length : 0;
+  const offsetX = -dy * offset;
+  const offsetY = dx * offset;
+  const controlX = (from.x + to.x) / 2 + offsetX;
+  return `M ${from.x} ${from.y} C ${controlX} ${from.y + offsetY}, ${controlX} ${to.y + offsetY}, ${to.x} ${to.y}`;
+}
+
+function wirePathEntries(wires, components, positions, endpoints) {
+  const endpointIds = new Set(endpoints.map(({ id }) => id));
+  const groups = new Map();
+  for (const wire of wires) {
+    const pair = [wire.from, wire.to].sort();
+    const key = JSON.stringify(pair);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(wire);
+  }
+
+  const indexes = new Map();
+  return wires.map((wire) => {
+    const pair = [wire.from, wire.to].sort();
+    const group = groups.get(JSON.stringify(pair));
+    const index = indexes.get(JSON.stringify(pair)) ?? 0;
+    indexes.set(JSON.stringify(pair), index + 1);
+    const centeredOffset = (index - (group.length - 1) / 2) * 14;
+    const orientation = wire.from <= wire.to ? 1 : -1;
+    const from = endpointPosition(wire.from, components, positions) ?? { x: 280, y: 475 };
+    const to = endpointPosition(wire.to, components, positions) ?? { x: 790, y: 475 };
+    const invalid = !endpointIds.has(wire.from) || !endpointIds.has(wire.to);
+    return {
+      wire,
+      invalid,
+      from,
+      to,
+      d: wirePath(from, to, centeredOffset * orientation),
+    };
+  });
 }
 
 function makeSelect(labelText, name, options, selectedValue = "") {
@@ -143,6 +182,17 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
   const fromSelect = root.querySelector("#circuit-wire-from");
   const toSelect = root.querySelector("#circuit-wire-to");
   const wireForm = root.querySelector("#circuit-wire-form");
+  const historyControls = htmlElement("div", "circuit-history-controls");
+  const undoButton = htmlElement("button", "tool-button circuit-history-button", "Deshacer");
+  undoButton.type = "button";
+  undoButton.dataset.circuitUndo = "";
+  undoButton.setAttribute("aria-label", "Deshacer el último cambio del circuito");
+  const redoButton = htmlElement("button", "tool-button circuit-history-button", "Rehacer");
+  redoButton.type = "button";
+  redoButton.dataset.circuitRedo = "";
+  redoButton.setAttribute("aria-label", "Rehacer el último cambio deshecho del circuito");
+  historyControls.append(undoButton, redoButton);
+  wireForm.before(historyControls);
   const wireEditor = htmlElement("section", "circuit-wire-editor");
   wireEditor.setAttribute("aria-live", "polite");
   wireList.after(wireEditor);
@@ -201,27 +251,34 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
       }, terminal.id));
     }
 
-    for (const wire of wires) {
-      const from = endpointPosition(wire.from, components, positions);
-      const to = endpointPosition(wire.to, components, positions);
-      if (from && to) {
-        const path = wirePath(from, to);
-        canvas.append(svgElement("path", {
-          d: path,
-          class: "circuit-wire-hit",
-          "data-wire-id": wire.id,
-          "aria-hidden": "true",
-        }));
-        canvas.append(svgElement("path", {
-          d: path,
-          class: `circuit-wire${wire.id === selectedWireId ? " is-selected" : ""}`,
-          "data-wire-id": wire.id,
-          tabindex: 0,
-          role: "button",
-          "aria-pressed": String(wire.id === selectedWireId),
-          "aria-label": `Conexión ${endpointTitle(wire.from)} con ${endpointTitle(wire.to)}${wire.id === selectedWireId ? ", seleccionada" : ""}`,
-        }));
-      }
+    const wireEntries = wirePathEntries(wires, components, positions, model.getEndpoints());
+    for (const { wire, d, invalid, from, to } of wireEntries) {
+      const invalidClass = invalid ? " is-invalid" : "";
+      canvas.append(svgElement("path", {
+        d,
+        class: `circuit-wire-hit${invalidClass}`,
+        "data-wire-id": wire.id,
+        "aria-hidden": "true",
+      }));
+      if (invalid) canvas.append(svgElement("text", {
+        x: (from.x + to.x) / 2,
+        y: (from.y + to.y) / 2 - 5,
+        class: "circuit-wire-warning",
+        "data-wire-warning": wire.id,
+        "aria-hidden": "true",
+      }, "⚠"));
+    }
+    for (const { wire, d, invalid } of wireEntries) {
+      const invalidClass = invalid ? " is-invalid" : "";
+      canvas.append(svgElement("path", {
+        d,
+        class: `circuit-wire${invalidClass}${wire.id === selectedWireId ? " is-selected" : ""}`,
+        "data-wire-id": wire.id,
+        tabindex: 0,
+        role: "button",
+        "aria-pressed": String(wire.id === selectedWireId),
+        "aria-label": `Conexión ${endpointTitle(wire.from)} con ${endpointTitle(wire.to)}${invalid ? ". Advertencia: extremo desconocido" : ""}${wire.id === selectedWireId ? ", seleccionada" : ""}`,
+      }));
     }
 
     const ledStates = model.getLedStates();
@@ -306,6 +363,7 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
 
   function renderWireControls() {
     const endpoints = model.getEndpoints();
+    const endpointIds = new Set(endpoints.map(({ id }) => id));
     const previousFrom = fromSelect.value;
     const previousTo = toSelect.value;
     fromSelect.replaceChildren();
@@ -321,15 +379,18 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
 
     wireList.replaceChildren();
     for (const wire of model.getWires()) {
-      const item = htmlElement("li", `circuit-wire-item${wire.id === selectedWireId ? " is-selected" : ""}`);
+      const invalid = !endpointIds.has(wire.from) || !endpointIds.has(wire.to);
+      const item = htmlElement("li", `circuit-wire-item${wire.id === selectedWireId ? " is-selected" : ""}${invalid ? " is-invalid" : ""}`);
       const select = htmlElement("button", "circuit-wire-select", `${endpointTitle(wire.from)} ↔ ${endpointTitle(wire.to)}`);
       select.type = "button";
       select.dataset.selectWire = wire.id;
       select.setAttribute("aria-pressed", String(wire.id === selectedWireId));
+      if (invalid) select.setAttribute("aria-label", `Conexión ${endpointTitle(wire.from)} con ${endpointTitle(wire.to)}. Extremo desconocido; selecciona para reparar o eliminar.`);
       const remove = htmlElement("button", "tool-button circuit-remove-wire", "Quitar");
       remove.type = "button";
       remove.dataset.removeWire = wire.id;
       remove.setAttribute("aria-label", `Quitar conexión ${endpointTitle(wire.from)} con ${endpointTitle(wire.to)}`);
+      if (invalid) item.append(htmlElement("span", "circuit-wire-warning-label", "⚠ Extremo desconocido"));
       item.append(select, remove);
       wireList.append(item);
     }
@@ -457,6 +518,9 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
   }
 
   function render() {
+    if (selectedComponentId && !model.getComponents().some(({ id }) => id === selectedComponentId)) {
+      selectedComponentId = null;
+    }
     renderCanvas();
     renderWireControls();
     renderComponentList();
@@ -473,6 +537,8 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
     status.textContent = model.getComponents().length
       ? `${model.getComponents().length} componentes · ${model.getWires().length} conexiones`
       : "Añade componentes o carga el circuito de ejemplo.";
+    undoButton.disabled = !model.canUndo();
+    redoButton.disabled = !model.canRedo();
   }
 
   function updateDragPreview() {
@@ -484,13 +550,14 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
     const components = model.getComponents();
     const positions = model.getVisualState().positions;
     positions[componentId] = position;
-    for (const wire of model.getWires()) {
-      const from = endpointPosition(wire.from, components, positions);
-      const to = endpointPosition(wire.to, components, positions);
-      if (from && to) {
-        for (const path of canvas.querySelectorAll(`[data-wire-id="${wire.id}"]`)) {
-          path.setAttribute("d", wirePath(from, to));
-        }
+    for (const entry of wirePathEntries(model.getWires(), components, positions, model.getEndpoints())) {
+      for (const path of canvas.querySelectorAll(`[data-wire-id="${entry.wire.id}"]`)) {
+        path.setAttribute("d", entry.d);
+      }
+      const warning = canvas.querySelector(`[data-wire-warning="${entry.wire.id}"]`);
+      if (warning) {
+        warning.setAttribute("x", String((entry.from.x + entry.to.x) / 2));
+        warning.setAttribute("y", String((entry.from.y + entry.to.y) / 2 - 5));
       }
     }
   }
@@ -616,7 +683,22 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
     else render();
   }
 
+  function runHistoryAction(action) {
+    const available = action === "undo" ? model.canUndo() : model.canRedo();
+    if (!available) return;
+    const change = model[action]();
+    if (change !== false) announceChange(change);
+  }
+
   root.addEventListener("click", (event) => {
+    if (event.target.closest("[data-circuit-undo]")) {
+      runHistoryAction("undo");
+      return;
+    }
+    if (event.target.closest("[data-circuit-redo]")) {
+      runHistoryAction("redo");
+      return;
+    }
     const clickedWire = event.target.closest(".circuit-wire[data-wire-id], .circuit-wire-hit[data-wire-id]");
     if (clickedWire) {
       selectedWireId = selectedWireId === clickedWire.dataset.wireId ? null : clickedWire.dataset.wireId;
@@ -739,6 +821,9 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
     const select = event.target.closest("[data-select-component], .circuit-component[data-component-id]");
     if (select) {
       selectedComponentId = select.dataset.selectComponent ?? select.dataset.componentId;
+      selectedWireId = null;
+      wireEditSide = null;
+      wireEditEndpoint = "";
       render();
       return;
     }
@@ -774,6 +859,38 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
         render();
       }
       return;
+    }
+    const activeElement = document.activeElement;
+    const textEntryFocused = activeElement instanceof Element &&
+      activeElement.matches("input, select, textarea, [contenteditable]");
+    if (event.key === "Delete" || event.key === "Backspace") {
+      if (textEntryFocused) return;
+      if (selectedWireId) {
+        event.preventDefault();
+        deleteSelectedWire();
+      } else if (selectedComponentId) {
+        event.preventDefault();
+        const change = model.removeComponent(selectedComponentId);
+        selectedComponentId = null;
+        if (change) announceChange(change);
+        else render();
+      }
+      return;
+    }
+
+    const modifier = event.ctrlKey || event.metaKey;
+    if (modifier && !event.altKey && !textEntryFocused) {
+      const key = event.key.toLowerCase();
+      if (key === "z") {
+        event.preventDefault();
+        runHistoryAction(event.shiftKey ? "redo" : "undo");
+        return;
+      }
+      if (key === "y" && !event.shiftKey) {
+        event.preventDefault();
+        runHistoryAction("redo");
+        return;
+      }
     }
     const terminal = event.target.closest("[data-terminal]");
     if (terminal && (event.key === "Enter" || event.key === " ")) {

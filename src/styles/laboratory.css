@@ -170,6 +170,18 @@
   cursor: pointer;
 }
 
+.circuit-wire.is-invalid {
+  stroke: #b87412;
+  stroke-dasharray: 7 4;
+}
+
+.circuit-wire-warning {
+  fill: #9a5b00;
+  font-size: 14px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
 .circuit-wire:focus-visible {
   outline: none;
   stroke-width: 7;
@@ -334,6 +346,10 @@
   outline-offset: 1px;
 }
 
+.circuit-wire-item.is-invalid {
+  border-inline-start: 3px solid #b87412;
+}
+
 .circuit-wire-select {
   min-width: 0;
   padding: 4px 2px;
@@ -346,9 +362,21 @@
 
 .circuit-wire-select:focus-visible,
 .circuit-wire-editor button:focus-visible,
-.circuit-wire-editor select:focus-visible {
+.circuit-wire-editor select:focus-visible,
+.circuit-history-button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.circuit-history-controls {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.circuit-history-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 .circuit-wire-editor {
@@ -375,6 +403,19 @@
 
 .circuit-wire-delete {
   border-color: #b94a48;
+}
+
+.circuit-wire-warning-label {
+  flex-basis: 100%;
+  color: #8b570c;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+:root[data-theme="dark"] .circuit-wire-warning,
+:root[data-theme="dark"] .circuit-wire-warning-label {
+  fill: #f2c66d;
+  color: #f2c66d;
 }
 
 .circuit-remove-wire {

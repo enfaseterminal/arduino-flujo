@@ -2,7 +2,7 @@
 
 Editor web educativo para analizar sketches de Arduino, generar diagramas de flujo SVG y explorar su ejecución con un simulador paso a paso.
 
-- **Aplicación:** <https://enfaseterminal.github.io/arduino-flujo/>
+- **Aplicación:** <https://arduino-flujo.enfaseterminal.com/>
 - **Repositorio:** <https://github.com/enfaseterminal/arduino-flujo>
 - **Licencia:** GNU GPLv3, ver [LICENSE](LICENSE).
 
@@ -66,4 +66,4 @@ El analizador y el simulador implementan un subconjunto educativo de C/C++; no s
 
 ## Publicación
 
-El workflow de GitHub Actions ejecuta los tests, compila la aplicación y la publica en GitHub Pages al actualizar `main`. La ruta publicada es <https://enfaseterminal.github.io/arduino-flujo/>.
+El workflow de GitHub Actions ejecuta los tests, compila la aplicación y la publica en GitHub Pages al actualizar `main`. La aplicación está disponible en <https://arduino-flujo.enfaseterminal.com/>.

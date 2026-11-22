@@ -21,7 +21,7 @@ import { renderAnalysisReport } from "./ui/diagnostics-panel.js";
 import { createStatusPanel } from "./ui/status-panel.js";
 import { initializeTheme } from "./ui/theme.js";
 import { initializeToolbar } from "./ui/toolbar.js";
-import { exportPdf, exportPng, exportSvg } from "./export/export-manager.js";
+import { exportPng, exportSvg } from "./export/export-manager.js";
 import { getApplicationUrl } from "./export/application-url.js";
 import { SimulationEngine } from "./simulator/simulation-engine.js";
 import { SimulationController } from "./simulator/simulation-controller.js";
@@ -654,6 +654,7 @@ pdfExportForm.addEventListener("submit", async (event) => {
   try {
     const pdfDiagramSvg = diagramSvg.cloneNode(true);
     renderFlowchart(pdfDiagramSvg, displayedDiagram, { showComments: true });
+    const { exportPdf } = await import("./export/pdf-exporter.js");
     const result = await exportPdf(
       pdfDiagramSvg,
       diagram.bounds,
