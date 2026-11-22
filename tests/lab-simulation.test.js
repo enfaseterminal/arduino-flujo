@@ -1,8 +1,10 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import { analyzeSource } from "../src/analyzer/analyzer.js";
 import { generateFlowcharts } from "../src/flowchart/flow-generator.js";
 import { layoutDiagram } from "../src/flowchart/flow-layout.js";
 import { createCircuitModel } from "../src/lab/circuit-model.js";
+import { createCircuitLab } from "../src/lab/circuit-lab.js";
 import { SimulationEngine } from "../src/simulator/simulation-engine.js";
 
 function createEngine(source, circuit, functionName = "setup") {
@@ -19,6 +21,20 @@ function createStorage() {
     getItem: (key) => items.get(key) ?? null,
     setItem: (key, value) => items.set(key, value),
   };
+}
+
+function createLabRoot() {
+  const root = document.createElement("section");
+  root.innerHTML = `
+    <svg id="circuit-canvas" viewBox="0 0 800 490"></svg>
+    <div id="circuit-component-list"></div><ul id="circuit-wire-list"></ul>
+    <section id="circuit-properties"></section><div id="circuit-warnings"></div>
+    <p id="circuit-status"></p><select id="circuit-wire-from"></select>
+    <select id="circuit-wire-to"></select><form id="circuit-wire-form"></form>
+    <button id="circuit-load-demo" type="button"></button><button id="circuit-clear" type="button"></button>
+  `;
+  document.body.append(root);
+  return root;
 }
 
 describe("circuit lab simulation integration", () => {
@@ -90,17 +106,20 @@ describe("circuit lab simulation integration", () => {
     const circuit = createCircuitModel(createStorage());
     circuit.loadDemo();
     const engine = createEngine(
-      "void loop() { pinMode(13, OUTPUT); digitalWrite(13, HIGH); digitalWrite(13, LOW); }",
+      'void loop() { Serial.begin(9600); Serial.println("layout stable"); pinMode(13, OUTPUT); digitalWrite(13, HIGH); digitalWrite(13, LOW); }',
       circuit,
       "loop",
     );
     engine.start();
     engine.stepForward();
     engine.stepForward();
+    engine.stepForward();
+    engine.stepForward();
     const beforeMove = engine.getState();
     const historyLength = engine.history.length;
     const wires = circuit.getWires();
 
+    expect(beforeMove.serialOutput).toBe("layout stable\n");
     const change = circuit.setComponentPosition("component-2", { x: 680, y: 330 });
 
     expect(change.changeType).toBe("visual");
@@ -110,7 +129,76 @@ describe("circuit lab simulation integration", () => {
     engine.stepBackward();
     expect(engine.state.status).toBe("paused");
     expect(engine.state.step).toBe(beforeMove.step - 1);
+    expect(engine.state.serialOutput).toBe(beforeMove.serialOutput);
     expect(circuit.getLedStates(engine.state.pins)["component-2"].state).toBe("unknown");
+  });
+
+  it("rebuilds simulation from persisted topology after creating, editing, and removing wires", () => {
+    const storage = createStorage();
+    const circuit = createCircuitModel(storage);
+    circuit.loadDemo();
+    const source = 'void loop() { Serial.begin(9600); Serial.println("before wiring change"); pinMode(13, OUTPUT); digitalWrite(13, HIGH); }';
+    let engine = createEngine(source, circuit, "loop");
+    engine.start();
+    for (let step = 0; step < 4; step += 1) engine.stepForward();
+    expect(engine.state.serialOutput).toBe("before wiring change\n");
+
+    const topologyChanges = [];
+    const root = createLabRoot();
+    createCircuitLab(root, circuit, {
+      onChange(change) {
+        if (change.changeType === "visual" || change.changeType === "input") return;
+        topologyChanges.push(change);
+        const activeDiagram = generateFlowcharts(analyzeSource(source).ast, source).diagrams
+          .find((item) => item.functionName === "loop");
+        layoutDiagram(activeDiagram);
+        engine = new SimulationEngine({
+          ast: analyzeSource(source).ast,
+          source,
+          diagram: activeDiagram,
+          circuit,
+        });
+      },
+    });
+
+    const from = root.querySelector("#circuit-wire-from");
+    const to = root.querySelector("#circuit-wire-to");
+    from.value = "arduino:D2";
+    to.value = "component-1:lead1";
+    root.querySelector("#circuit-wire-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
+    const newWire = circuit.getWires().at(-1);
+    expect(topologyChanges.at(-1).changeType).toBe("topology");
+    expect(engine.state).toMatchObject({ status: "idle", pins: {}, serialOutput: "" });
+    expect(engine.history).toHaveLength(0);
+    expect(JSON.parse(storage.getItem("arduino-flowchart-circuit")).wires).toEqual(circuit.getWires());
+
+    root.querySelector(`[data-select-wire="${newWire.id}"]`).click();
+    const side = root.querySelector("[data-wire-edit-side]");
+    side.value = "from";
+    side.dispatchEvent(new Event("change", { bubbles: true }));
+    const endpoint = root.querySelector("[data-wire-edit-endpoint]");
+    endpoint.value = "arduino:D3";
+    endpoint.dispatchEvent(new Event("change", { bubbles: true }));
+    root.querySelector("[data-confirm-wire-edit]").click();
+    expect(topologyChanges.at(-1).changeType).toBe("topology");
+    expect(circuit.getWires().find(({ id }) => id === newWire.id)).toEqual({
+      id: newWire.id,
+      from: "arduino:D3",
+      to: "component-1:lead1",
+    });
+    expect(engine.state).toMatchObject({ status: "idle", pins: {}, serialOutput: "" });
+    expect(JSON.parse(storage.getItem("arduino-flowchart-circuit")).wires).toEqual(circuit.getWires());
+
+    root.querySelector(`[data-select-wire="${newWire.id}"]`).click();
+    root.querySelector("[data-delete-selected-wire]").click();
+    expect(topologyChanges.at(-1).changeType).toBe("topology");
+    expect(circuit.getWires().some(({ id }) => id === newWire.id)).toBe(false);
+    expect(circuit.getWires()).toHaveLength(3);
+    expect(engine.state).toMatchObject({ status: "idle", pins: {}, serialOutput: "" });
+    expect(JSON.parse(storage.getItem("arduino-flowchart-circuit")).wires).toEqual(circuit.getWires());
+    expect(topologyChanges).toHaveLength(3);
   });
 
   it("uses a connected potentiometer value for analogRead", () => {

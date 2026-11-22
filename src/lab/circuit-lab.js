@@ -128,6 +128,9 @@ function makeSelect(labelText, name, options, selectedValue = "") {
 
 export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo = () => {} } = {}) {
   let selectedComponentId = null;
+  let selectedWireId = null;
+  let wireEditSide = null;
+  let wireEditEndpoint = "";
   let currentSimulationInputs = null;
   let activeDrag = null;
   let suppressedClick = null;
@@ -140,6 +143,9 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
   const fromSelect = root.querySelector("#circuit-wire-from");
   const toSelect = root.querySelector("#circuit-wire-to");
   const wireForm = root.querySelector("#circuit-wire-form");
+  const wireEditor = htmlElement("section", "circuit-wire-editor");
+  wireEditor.setAttribute("aria-live", "polite");
+  wireList.after(wireEditor);
 
   function announceChange(change) {
     render();
@@ -184,6 +190,8 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
         tabindex: 0,
         role: "button",
         "aria-label": `Terminal Arduino ${terminal.id}`,
+        "aria-pressed": String(fromSelect.value === `arduino:${terminal.id}`),
+        class: `circuit-terminal${fromSelect.value === `arduino:${terminal.id}` ? " is-origin-selected" : ""}`,
       }));
       canvas.append(svgElement("text", {
         x: 216,
@@ -196,11 +204,24 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
     for (const wire of wires) {
       const from = endpointPosition(wire.from, components, positions);
       const to = endpointPosition(wire.to, components, positions);
-      if (from && to) canvas.append(svgElement("path", {
-        d: wirePath(from, to),
-        class: "circuit-wire",
-        "data-wire-id": wire.id,
-      }));
+      if (from && to) {
+        const path = wirePath(from, to);
+        canvas.append(svgElement("path", {
+          d: path,
+          class: "circuit-wire-hit",
+          "data-wire-id": wire.id,
+          "aria-hidden": "true",
+        }));
+        canvas.append(svgElement("path", {
+          d: path,
+          class: `circuit-wire${wire.id === selectedWireId ? " is-selected" : ""}`,
+          "data-wire-id": wire.id,
+          tabindex: 0,
+          role: "button",
+          "aria-pressed": String(wire.id === selectedWireId),
+          "aria-label": `Conexión ${endpointTitle(wire.from)} con ${endpointTitle(wire.to)}${wire.id === selectedWireId ? ", seleccionada" : ""}`,
+        }));
+      }
     }
 
     const ledStates = model.getLedStates();
@@ -274,6 +295,8 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
           tabindex: 0,
           role: "button",
           "aria-label": `Terminal ${terminal.id} de ${componentDescription(component)}`,
+          "aria-pressed": String(fromSelect.value === `${component.id}:${terminal.id}`),
+          class: `circuit-terminal${fromSelect.value === `${component.id}:${terminal.id}` ? " is-origin-selected" : ""}`,
         }));
       }
       canvas.append(group);
@@ -298,14 +321,59 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
 
     wireList.replaceChildren();
     for (const wire of model.getWires()) {
-      const item = htmlElement("li", "circuit-wire-item", `${endpointTitle(wire.from)} ↔ ${endpointTitle(wire.to)}`);
+      const item = htmlElement("li", `circuit-wire-item${wire.id === selectedWireId ? " is-selected" : ""}`);
+      const select = htmlElement("button", "circuit-wire-select", `${endpointTitle(wire.from)} ↔ ${endpointTitle(wire.to)}`);
+      select.type = "button";
+      select.dataset.selectWire = wire.id;
+      select.setAttribute("aria-pressed", String(wire.id === selectedWireId));
       const remove = htmlElement("button", "tool-button circuit-remove-wire", "Quitar");
       remove.type = "button";
       remove.dataset.removeWire = wire.id;
       remove.setAttribute("aria-label", `Quitar conexión ${endpointTitle(wire.from)} con ${endpointTitle(wire.to)}`);
-      item.append(remove);
+      item.append(select, remove);
       wireList.append(item);
     }
+
+    if (selectedWireId && !model.getWires().some(({ id }) => id === selectedWireId)) {
+      selectedWireId = null;
+      wireEditSide = null;
+      wireEditEndpoint = "";
+    }
+    wireEditor.replaceChildren();
+    const selectedWire = model.getWires().find(({ id }) => id === selectedWireId);
+    if (!selectedWire) return;
+    const heading = htmlElement("h3", "", `Conexión seleccionada · ${selectedWire.id}`);
+    wireEditor.append(heading);
+    if (wireEditSide === null) {
+      wireEditor.append(htmlElement("p", "circuit-help", `${endpointTitle(selectedWire.from)} ↔ ${endpointTitle(selectedWire.to)}`));
+      const side = makeSelect("Extremo que sustituir", "wire-side", [["from", `Origen · ${endpointTitle(selectedWire.from)}`], ["to", `Destino · ${endpointTitle(selectedWire.to)}`]]);
+      side.control.dataset.wireEditSide = "";
+      const edit = htmlElement("button", "tool-button button-primary circuit-wire-edit", "Editar extremo");
+      edit.type = "button";
+      edit.dataset.startWireEdit = "";
+      const remove = htmlElement("button", "tool-button tool-button-danger circuit-wire-delete", "Eliminar conexión");
+      remove.type = "button";
+      remove.dataset.deleteSelectedWire = "";
+      wireEditor.append(side.label, edit, remove);
+      return;
+    }
+
+    const side = makeSelect("Extremo que sustituir", "wire-side", [["from", `Origen · ${endpointTitle(selectedWire.from)}`], ["to", `Destino · ${endpointTitle(selectedWire.to)}`]], wireEditSide);
+    side.control.dataset.wireEditSide = "";
+    const endpoint = makeSelect("Nuevo terminal", "wire-endpoint", endpoints.map(({ id, label }) => [id, label]), wireEditEndpoint);
+    endpoint.control.dataset.wireEditEndpoint = "";
+    const confirm = htmlElement("button", "tool-button button-primary circuit-wire-confirm", "Confirmar cambio");
+    confirm.type = "button";
+    confirm.dataset.confirmWireEdit = "";
+    confirm.disabled = !wireEditEndpoint;
+    const cancel = htmlElement("button", "tool-button circuit-wire-cancel", "Cancelar");
+    cancel.type = "button";
+    cancel.dataset.cancelWireEdit = "";
+    const remove = htmlElement("button", "tool-button tool-button-danger circuit-wire-delete", "Eliminar conexión");
+    remove.type = "button";
+    remove.dataset.deleteSelectedWire = "";
+    wireEditor.append(side.label, endpoint.label, confirm, cancel, remove,
+      htmlElement("p", "circuit-help", "También puedes seleccionar el nuevo terminal en el montaje y confirmar el cambio."));
   }
 
   function renderComponentList() {
@@ -417,12 +485,13 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
     const positions = model.getVisualState().positions;
     positions[componentId] = position;
     for (const wire of model.getWires()) {
-      const path = [...canvas.querySelectorAll(".circuit-wire")]
-        .find((item) => item.dataset.wireId === wire.id);
-      if (!path) continue;
       const from = endpointPosition(wire.from, components, positions);
       const to = endpointPosition(wire.to, components, positions);
-      if (from && to) path.setAttribute("d", wirePath(from, to));
+      if (from && to) {
+        for (const path of canvas.querySelectorAll(`[data-wire-id="${wire.id}"]`)) {
+          path.setAttribute("d", wirePath(from, to));
+        }
+      }
     }
   }
 
@@ -452,7 +521,7 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
   canvas.addEventListener("pointerdown", (event) => {
     suppressedClick = null;
     if (event.button !== 0 || event.isPrimary === false || !(event.target instanceof Element)) return;
-    if (event.target.closest("[data-terminal]")) return;
+    if (event.target.closest("[data-terminal], .circuit-wire")) return;
     const element = event.target.closest(".circuit-component[data-component-id]");
     if (!element) return;
     const componentId = element.dataset.componentId;
@@ -507,13 +576,102 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
 
   function addWire(from, to) {
     try {
-      announceChange(model.addWire(from, to));
+      const change = model.addWire(from, to);
+      fromSelect.value = "";
+      toSelect.value = "";
+      selectedWireId = null;
+      announceChange(change);
     } catch (error) {
       status.textContent = error.message;
     }
   }
 
+  function cancelWireEdit() {
+    wireEditSide = null;
+    wireEditEndpoint = "";
+    renderWireControls();
+    status.textContent = "Edición de conexión cancelada.";
+  }
+
+  function applyWireEdit() {
+    if (!selectedWireId || !wireEditSide || !wireEditEndpoint) return;
+    try {
+      const change = model.updateWireEndpoint(selectedWireId, wireEditSide, wireEditEndpoint);
+      wireEditSide = null;
+      wireEditEndpoint = "";
+      status.textContent = "Conexión actualizada.";
+      announceChange(change);
+    } catch (error) {
+      status.textContent = `No se pudo editar la conexión: ${error.message}`;
+    }
+  }
+
+  function deleteSelectedWire() {
+    if (!selectedWireId) return;
+    const change = model.removeWire(selectedWireId);
+    selectedWireId = null;
+    wireEditSide = null;
+    wireEditEndpoint = "";
+    if (change) announceChange(change);
+    else render();
+  }
+
   root.addEventListener("click", (event) => {
+    const clickedWire = event.target.closest(".circuit-wire[data-wire-id], .circuit-wire-hit[data-wire-id]");
+    if (clickedWire) {
+      selectedWireId = selectedWireId === clickedWire.dataset.wireId ? null : clickedWire.dataset.wireId;
+      selectedComponentId = null;
+      fromSelect.value = "";
+      wireEditSide = null;
+      wireEditEndpoint = "";
+      event.stopPropagation();
+      render();
+      return;
+    }
+
+    if (event.target.closest("[data-delete-selected-wire]")) {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteSelectedWire();
+      return;
+    }
+    const deleteWire = event.target.closest("[data-remove-wire]");
+    if (deleteWire) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (selectedWireId === deleteWire.dataset.removeWire) deleteSelectedWire();
+      else {
+        const change = model.removeWire(deleteWire.dataset.removeWire);
+        if (change) announceChange(change);
+      }
+      return;
+    }
+    const wireSelection = event.target.closest("[data-select-wire]");
+    if (wireSelection) {
+      selectedWireId = wireSelection.dataset.selectWire;
+      selectedComponentId = null;
+      fromSelect.value = "";
+      wireEditSide = null;
+      wireEditEndpoint = "";
+      render();
+      return;
+    }
+    if (event.target.closest("[data-start-wire-edit]")) {
+      wireEditSide = wireEditor.querySelector("[data-wire-edit-side]").value;
+      wireEditEndpoint = "";
+      renderWireControls();
+      status.textContent = `Selecciona un nuevo terminal para el extremo ${wireEditSide === "from" ? "de origen" : "de destino"}.`;
+      return;
+    }
+    if (event.target.closest("[data-confirm-wire-edit]")) {
+      applyWireEdit();
+      return;
+    }
+    if (event.target.closest("[data-cancel-wire-edit]")) {
+      cancelWireEdit();
+      return;
+    }
+
     const clickedComponent = event.target.closest(".circuit-component[data-component-id]");
     if (
       clickedComponent &&
@@ -541,27 +699,40 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
     if (event.target.closest("#circuit-load-demo")) {
       const result = model.loadDemo();
       selectedComponentId = "component-2";
+      selectedWireId = null;
+      wireEditSide = null;
+      wireEditEndpoint = "";
+      fromSelect.value = "";
       onLoadDemo();
       announceChange(result);
       return;
     }
     if (event.target.closest("#circuit-clear")) {
       selectedComponentId = null;
+      selectedWireId = null;
+      wireEditSide = null;
+      wireEditEndpoint = "";
+      fromSelect.value = "";
       announceChange(model.clear());
       return;
     }
     const terminal = event.target.closest("[data-terminal]");
     if (terminal) {
-      if (!fromSelect.value) {
+      if (selectedWireId && wireEditSide !== null) {
+        wireEditEndpoint = terminal.dataset.terminal;
+        renderWireControls();
+        status.textContent = `Nuevo terminal seleccionado: ${endpointTitle(wireEditEndpoint)}. Confirma el cambio o cancélalo.`;
+      } else if (!fromSelect.value) {
         fromSelect.value = terminal.dataset.terminal;
         status.textContent = `Terminal inicial: ${endpointTitle(fromSelect.value)}. Selecciona otro terminal para conectar.`;
+        render();
       } else if (terminal.dataset.terminal === fromSelect.value) {
         fromSelect.value = "";
+        status.textContent = "Selección de terminal cancelada.";
+        render();
       } else {
         toSelect.value = terminal.dataset.terminal;
         addWire(fromSelect.value, toSelect.value);
-        fromSelect.value = "";
-        toSelect.value = "";
       }
       return;
     }
@@ -575,12 +746,6 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
     if (removeComponent) {
       const result = model.removeComponent(removeComponent.dataset.removeComponent);
       selectedComponentId = null;
-      if (result) announceChange(result);
-      return;
-    }
-    const removeWire = event.target.closest("[data-remove-wire]");
-    if (removeWire) {
-      const result = model.removeWire(removeWire.dataset.removeWire);
       if (result) announceChange(result);
       return;
     }
@@ -598,14 +763,42 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
   });
 
   root.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      if (wireEditSide !== null) cancelWireEdit();
+      else if (fromSelect.value) {
+        fromSelect.value = "";
+        status.textContent = "Selección de terminal cancelada.";
+        render();
+      } else if (selectedWireId) {
+        selectedWireId = null;
+        render();
+      }
+      return;
+    }
     const terminal = event.target.closest("[data-terminal]");
     if (terminal && (event.key === "Enter" || event.key === " ")) {
       event.preventDefault();
       terminal.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     }
+    const wire = event.target.closest(".circuit-wire[data-wire-id]");
+    if (wire && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      wire.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    }
   });
 
   root.addEventListener("change", (event) => {
+    if (event.target.matches("[data-wire-edit-side]")) {
+      wireEditSide = event.target.value;
+      wireEditEndpoint = "";
+      renderWireControls();
+      return;
+    }
+    if (event.target.matches("[data-wire-edit-endpoint]")) {
+      wireEditEndpoint = event.target.value;
+      renderWireControls();
+      return;
+    }
     const property = event.target.dataset.property;
     if (!property || !selectedComponentId) return;
     try {

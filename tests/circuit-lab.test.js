@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { circuitStorageKey, createCircuitModel } from "../src/lab/circuit-model.js";
 import { createCircuitLab } from "../src/lab/circuit-lab.js";
 import { getComponentTerminals } from "../src/lab/circuit-catalog.js";
@@ -181,6 +181,26 @@ describe("circuit lab interface", () => {
     lab.render();
   });
 
+  it("keeps dragging after the pointer leaves the component through pointer capture", () => {
+    const root = createRoot();
+    const model = createCircuitModel(createMemoryStorage());
+    const component = model.addComponent("led").component;
+    createCircuitLab(root, model);
+    const element = root.querySelector(`[data-component-id="${component.id}"]`);
+    const capturePointer = vi.fn();
+    element.setPointerCapture = capturePointer;
+
+    dispatchPointer(element, "pointerdown", { pointerId: 7, x: 100, y: 100 });
+    expect(capturePointer).toHaveBeenCalledWith(7);
+    dispatchPointer(element, "pointermove", { pointerId: 7, x: 145, y: 130 });
+    dispatchPointer(element, "pointerup", { pointerId: 7, x: 145, y: 130 });
+
+    expect(model.getComponentPosition(component.id)).toEqual({
+      x: component.position.x + 45,
+      y: component.position.y + 30,
+    });
+  });
+
   it("previews cable movement while dragging and exports the committed visual position", () => {
     const root = createRoot();
     const storage = createMemoryStorage();
@@ -269,6 +289,147 @@ describe("circuit lab interface", () => {
     dispatchPointer(root.querySelector("#circuit-canvas"), "pointerup", { x: 100, y: 100 });
     componentElement.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(root.querySelector(`[data-component-id="${component.id}"]`).classList.contains("is-selected")).toBe(true);
+  });
+
+  it("highlights and cancels a terminal origin with Escape or a second click, then creates a wire", () => {
+    const root = createRoot();
+    const model = createCircuitModel(createMemoryStorage());
+    const led = model.addComponent("led").component;
+    createCircuitLab(root, model);
+    const selectTerminal = (id) => root.querySelector(`[data-terminal="${id}"]`)
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    selectTerminal(`${led.id}:anode`);
+    expect(root.querySelector(`[data-terminal="${led.id}:anode"]`).classList.contains("is-origin-selected")).toBe(true);
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(root.querySelector("#circuit-wire-from").value).toBe("");
+    expect(root.querySelector(`[data-terminal="${led.id}:anode"]`).classList.contains("is-origin-selected")).toBe(false);
+
+    selectTerminal(`${led.id}:anode`);
+    selectTerminal(`${led.id}:anode`);
+    expect(root.querySelector("#circuit-wire-from").value).toBe("");
+    expect(model.getWires()).toHaveLength(0);
+
+    selectTerminal("arduino:D13");
+    expect(root.querySelector(`[data-terminal="arduino:D13"]`).getAttribute("aria-pressed")).toBe("true");
+    selectTerminal(`${led.id}:anode`);
+    expect(model.getWires()).toEqual([
+      { id: "wire-2", from: "arduino:D13", to: `${led.id}:anode` },
+    ]);
+  });
+
+  it("selects an SVG wire without selecting or dragging a component", () => {
+    const root = createRoot();
+    const model = createCircuitModel(createMemoryStorage());
+    model.loadDemo();
+    createCircuitLab(root, model);
+    const before = model.getComponentPosition("component-1");
+    const wire = root.querySelector('[data-wire-id="wire-3"].circuit-wire');
+    dispatchPointer(wire, "pointerdown", { x: 100, y: 100 });
+    dispatchPointer(root.querySelector("#circuit-canvas"), "pointermove", { x: 160, y: 150 });
+    dispatchPointer(root.querySelector("#circuit-canvas"), "pointerup", { x: 160, y: 150 });
+    wire.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(root.querySelector('[data-wire-id="wire-3"].circuit-wire').classList.contains("is-selected")).toBe(true);
+    expect(root.querySelector(".circuit-component.is-selected")).toBeNull();
+    expect(model.getComponentPosition("component-1")).toEqual(before);
+  });
+
+  it("edits both wire endpoints through the lab controls while retaining the wire ID", () => {
+    const root = createRoot();
+    const model = createCircuitModel(createMemoryStorage());
+    model.loadDemo();
+    const lab = createCircuitLab(root, model);
+    const wireId = "wire-3";
+    const selectWire = () => root.querySelector(`[data-select-wire="${wireId}"]`).click();
+    const changeControl = (selector, value) => {
+      const control = root.querySelector(selector);
+      control.value = value;
+      control.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    const startEdit = (side) => {
+      selectWire();
+      changeControl("[data-wire-edit-side]", side);
+    };
+
+    startEdit("from");
+    changeControl("[data-wire-edit-endpoint]", "arduino:D12");
+    root.querySelector("[data-confirm-wire-edit]").click();
+    expect(model.getWires().find(({ id }) => id === wireId)).toEqual({
+      id: wireId,
+      from: "arduino:D12",
+      to: "component-1:lead1",
+    });
+
+    startEdit("to");
+    changeControl("[data-wire-edit-endpoint]", "component-2:cathode");
+    root.querySelector("[data-confirm-wire-edit]").click();
+    expect(model.getWires().find(({ id }) => id === wireId)).toEqual({
+      id: wireId,
+      from: "arduino:D12",
+      to: "component-2:cathode",
+    });
+    const beforeExport = model.getState();
+    const visiblePath = root.querySelector(`[data-wire-id="${wireId}"].circuit-wire`).getAttribute("d");
+    const exported = lab.getSvgForExport();
+    expect(exported.querySelector(`[data-wire-id="${wireId}"].circuit-wire`).getAttribute("d"))
+      .toBe(visiblePath);
+    expect(model.getState()).toEqual(beforeExport);
+  });
+
+  it("cancels wire edits and reports invalid edits without changing the circuit", () => {
+    const root = createRoot();
+    const model = createCircuitModel(createMemoryStorage());
+    model.loadDemo();
+    model.addWire("arduino:D12", "component-1:lead1");
+    createCircuitLab(root, model);
+    const before = model.getWires();
+    const wire = root.querySelector('[data-wire-id="wire-3"].circuit-wire');
+    wire.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const side = root.querySelector("[data-wire-edit-side]");
+    side.value = "from";
+    side.dispatchEvent(new Event("change", { bubbles: true }));
+    root.querySelector("[data-wire-edit-endpoint]").value = "arduino:D12";
+    root.querySelector("[data-wire-edit-endpoint]").dispatchEvent(new Event("change", { bubbles: true }));
+    root.querySelector("[data-cancel-wire-edit]").click();
+    expect(model.getWires()).toEqual(before);
+
+    root.querySelector("[data-wire-edit-side]").value = "to";
+    root.querySelector("[data-wire-edit-side]").dispatchEvent(new Event("change", { bubbles: true }));
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(model.getWires()).toEqual(before);
+
+    root.querySelector('[data-select-wire="wire-3"]').click();
+    const nextSide = root.querySelector("[data-wire-edit-side]");
+    nextSide.value = "from";
+    nextSide.dispatchEvent(new Event("change", { bubbles: true }));
+    const endpoint = root.querySelector("[data-wire-edit-endpoint]");
+    endpoint.value = "arduino:D12";
+    endpoint.dispatchEvent(new Event("change", { bubbles: true }));
+    root.querySelector("[data-confirm-wire-edit]").click();
+    expect(model.getWires()).toEqual(before);
+    expect(root.querySelector("#circuit-status").textContent).toContain("No se pudo editar la conexión");
+  });
+
+  it("deletes the selected wire only and leaves other connections and components intact", () => {
+    const root = createRoot();
+    const model = createCircuitModel(createMemoryStorage());
+    model.loadDemo();
+    const beforeComponents = model.getComponents();
+    const beforeWires = model.getWires();
+    const lab = createCircuitLab(root, model);
+    root.querySelector('[data-wire-id="wire-4"].circuit-wire')
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const wire = root.querySelector('[data-wire-id="wire-4"].circuit-wire');
+    dispatchPointer(wire, "pointerdown", { x: 100, y: 100 });
+    dispatchPointer(root.querySelector("#circuit-canvas"), "pointerup", { x: 100, y: 100 });
+    root.querySelector("[data-delete-selected-wire]").click();
+
+    expect(model.getWires()).toEqual(beforeWires.filter(({ id }) => id !== "wire-4"));
+    expect(model.getComponents()).toEqual(beforeComponents);
+    expect(root.querySelector(".circuit-wire.is-selected")).toBeNull();
+    expect(root.querySelector(".circuit-component.is-selected")).toBeNull();
+    expect(lab.getModel().getWires()).toHaveLength(2);
   });
 
   it("exports a styled clone of the actual laboratory SVG without changing the displayed mount", () => {

@@ -394,7 +394,7 @@ void helper() { // helper note
           author: "No especificado",
           date: "2026-11-01",
           description: "Control de un LED",
-          version: "v0.9.1",
+          version: "v0.9.3",
         },
         sections: { diagram: true, code: true, circuit: true, components: true, connections: true },
         sourceCode: longCode,
@@ -418,7 +418,7 @@ void helper() { // helper note
     const allText = pdf.text.mock.calls.flatMap(([value]) => Array.isArray(value) ? value : [value]).join(" ");
     expect(allText).toContain("Luz de prueba");
     expect(allText).toContain("No especificado");
-    expect(allText).toContain("v0.9.1");
+    expect(allText).toContain("v0.9.3");
     expect(allText).toContain("D13");
     expect(allText).toContain("R1");
     expect(allText).toContain("220 Ω");
@@ -426,6 +426,49 @@ void helper() { // helper note
     expect(allText).toContain("LED");
     expect(pdf.setPage).toHaveBeenCalledTimes(result.pages);
     expect(allText.match(/https:\/\/example\.test\/cacharreria\/diagrama-flujo\//g)).toHaveLength(result.pages);
+  });
+
+  it("exports edited and removed connections from the model without mutating the circuit", async () => {
+    const { svg, diagram } = renderSource(source);
+    const storage = {
+      getItem: () => null,
+      setItem: () => {},
+    };
+    const circuit = createCircuitModel(storage);
+    circuit.loadDemo();
+    circuit.updateWireEndpoint("wire-3", "from", "arduino:D12");
+    circuit.removeWire("wire-5");
+    const before = circuit.getState();
+    const circuitSvg = document.createElementNS(SVG_NS, "svg");
+    circuitSvg.setAttribute("viewBox", "0 0 800 490");
+    const marker = document.createElementNS(SVG_NS, "text");
+    marker.textContent = "Montaje actualizado";
+    circuitSvg.append(marker);
+    const pdf = createPdfStub();
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:updated-circuit");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    await exportPdf(svg, diagram.bounds, "setup", {
+      sections: { diagram: false, code: false, circuit: true, components: true, connections: true },
+      circuitSvg,
+      components: circuit.getComponents(),
+      wires: circuit.getWires(),
+    }, () => pdf, renderPdfStub);
+
+    expect(pdf.svg).toHaveBeenCalledOnce();
+    expect(pdf.svg.mock.calls[0][0].textContent).toContain("Montaje actualizado");
+    const exportedTableText = pdf.text.mock.calls
+      .flatMap(([value]) => Array.isArray(value) ? value : [value])
+      .join(" ");
+    expect(exportedTableText).toContain("Arduino D12");
+    expect(exportedTableText).not.toContain("Arduino D13");
+    expect(exportedTableText).not.toContain("GND");
+    expect(circuit.getState()).toEqual(before);
+    expect(circuit.getWires()).toEqual([
+      { id: "wire-3", from: "arduino:D12", to: "component-1:lead1" },
+      { id: "wire-4", from: "component-1:lead2", to: "component-2:anode" },
+    ]);
   });
 
   it("normalizes the application URL for root, subdomain, Pages subdirectory, and index URLs", () => {

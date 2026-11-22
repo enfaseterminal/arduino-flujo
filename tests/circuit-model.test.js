@@ -90,6 +90,57 @@ describe("circuit model", () => {
     expect(model.getWires()).toEqual([]);
   });
 
+  it("edits either wire endpoint atomically, preserves IDs, and persists topology changes", () => {
+    const storage = createMemoryStorage();
+    const model = createCircuitModel(storage);
+    const led = model.addComponent("led").component;
+    const resistor = model.addComponent("resistor").component;
+    const wire = model.addWire("arduino:D13", `${led.id}:anode`).wire;
+
+    const fromChange = model.updateWireEndpoint(wire.id, "from", "arduino:D12");
+    expect(fromChange).toMatchObject({
+      changeType: "topology",
+      wire: { id: wire.id, from: "arduino:D12", to: `${led.id}:anode` },
+    });
+    const toChange = model.updateWireEndpoint(wire.id, "to", `${resistor.id}:lead1`);
+    expect(toChange).toMatchObject({
+      changeType: "topology",
+      wire: { id: wire.id, from: "arduino:D12", to: `${resistor.id}:lead1` },
+    });
+
+    const saved = JSON.parse(storage.getItem(circuitStorageKey));
+    expect(saved.wires).toContainEqual({
+      id: wire.id,
+      from: "arduino:D12",
+      to: `${resistor.id}:lead1`,
+    });
+    expect(createCircuitModel(storage).getWires()).toEqual(model.getWires());
+  });
+
+  it("rejects invalid wire edits without mutation and permits shared and intracomponent terminals", () => {
+    const storage = createMemoryStorage();
+    const model = createCircuitModel(storage);
+    const led = model.addComponent("led").component;
+    const first = model.addWire("arduino:D13", `${led.id}:anode`).wire;
+    const second = model.addWire("arduino:D12", `${led.id}:anode`).wire;
+    model.addWire(`${led.id}:anode`, `${led.id}:cathode`);
+
+    const beforeWires = model.getWires();
+    const beforeStored = storage.getItem(circuitStorageKey);
+    expect(() => model.updateWireEndpoint("missing-wire", "from", "arduino:D2"))
+      .toThrow("no existe");
+    expect(() => model.updateWireEndpoint(first.id, "start", "arduino:D2"))
+      .toThrow("from");
+    expect(() => model.updateWireEndpoint(first.id, "from", "arduino:UNKNOWN"))
+      .toThrow("terminales distintos y válidos");
+    expect(() => model.updateWireEndpoint(first.id, "from", `${led.id}:anode`))
+      .toThrow("terminales distintos y válidos");
+    expect(() => model.updateWireEndpoint(second.id, "from", "arduino:D13"))
+      .toThrow("ya están conectados");
+    expect(model.getWires()).toEqual(beforeWires);
+    expect(storage.getItem(circuitStorageKey)).toBe(beforeStored);
+  });
+
   it("shows a connected LED only for an OUTPUT pin, series resistor and known digital level", () => {
     const model = createCircuitModel(createMemoryStorage());
     model.loadDemo();

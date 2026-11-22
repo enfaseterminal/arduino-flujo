@@ -139,6 +139,7 @@ function normalizedCircuit(value) {
 }
 
 function endpointExists(circuit, endpoint) {
+  if (typeof endpoint !== "string" || !endpoint) return false;
   if (endpoint.startsWith("arduino:")) {
     return isArduinoTerminal(endpoint.slice("arduino:".length));
   }
@@ -146,6 +147,22 @@ function endpointExists(circuit, endpoint) {
   if (separator < 1) return false;
   const component = circuit.components.find((item) => item.id === endpoint.slice(0, separator));
   return Boolean(component && componentTerminalIds(component).includes(endpoint.slice(separator + 1)));
+}
+
+function validateWireEndpoints(circuit, from, to, excludedWireId = null) {
+  if (
+    typeof from !== "string" ||
+    typeof to !== "string" ||
+    from === to ||
+    !endpointExists(circuit, from) ||
+    !endpointExists(circuit, to)
+  ) {
+    throw new TypeError("Selecciona dos terminales distintos y válidos.");
+  }
+  if (circuit.wires.some((wire) =>
+    wire.id !== excludedWireId &&
+    ((wire.from === from && wire.to === to) || (wire.from === to && wire.to === from)),
+  )) throw new Error("Esos terminales ya están conectados.");
 }
 
 function wireReachable(circuit, start, target) {
@@ -326,14 +343,21 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
       return { position: { ...state.visual.positions[id] }, ...update("visual") };
     },
     addWire(from, to) {
-      if (from === to || !endpointExists(state, from) || !endpointExists(state, to)) {
-        throw new TypeError("Selecciona dos terminales distintos y válidos.");
-      }
-      if (state.wires.some((wire) =>
-        (wire.from === from && wire.to === to) || (wire.from === to && wire.to === from),
-      )) throw new Error("Esos terminales ya están conectados.");
+      validateWireEndpoints(state, from, to);
       const wire = { id: `wire-${nextId++}`, from, to };
       state.wires.push(wire);
+      return { wire: cloneValue(wire), ...update("topology") };
+    },
+    updateWireEndpoint(wireId, side, newEndpoint) {
+      const wire = state.wires.find((item) => item.id === wireId);
+      if (!wire) throw new Error("La conexión seleccionada ya no existe.");
+      if (side !== "from" && side !== "to") {
+        throw new TypeError("El extremo debe ser «from» o «to».");
+      }
+      const from = side === "from" ? newEndpoint : wire.from;
+      const to = side === "to" ? newEndpoint : wire.to;
+      validateWireEndpoints(state, from, to, wireId);
+      wire[side] = newEndpoint;
       return { wire: cloneValue(wire), ...update("topology") };
     },
     removeWire(id) {

@@ -145,17 +145,47 @@
   stroke-width: 3;
 }
 
+.circuit-terminal.is-origin-selected {
+  fill: #f3a928;
+  stroke: #59380d;
+  stroke-width: 3;
+  filter: drop-shadow(0 0 3px #f3a928);
+}
+
 .circuit-wire {
   fill: none;
   stroke: #db5b48;
   stroke-width: 4;
   stroke-linecap: round;
   opacity: 0.85;
-  pointer-events: none;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.circuit-wire-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.circuit-wire:focus-visible {
+  outline: none;
+  stroke-width: 7;
+  filter: drop-shadow(0 0 3px var(--accent));
+}
+
+.circuit-wire.is-selected {
+  stroke: var(--accent);
+  stroke-width: 6;
+  opacity: 1;
+  filter: drop-shadow(0 0 3px var(--accent));
 }
 
 .circuit-component {
   cursor: grab;
+  touch-action: none;
 }
 
 .circuit-canvas.is-dragging .circuit-component {
@@ -297,6 +327,54 @@
   background: var(--surface);
   color: var(--text-secondary);
   font-size: 10px;
+}
+
+.circuit-wire-item.is-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.circuit-wire-select {
+  min-width: 0;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.circuit-wire-select:focus-visible,
+.circuit-wire-editor button:focus-visible,
+.circuit-wire-editor select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.circuit-wire-editor {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.circuit-wire-editor h3,
+.circuit-wire-editor .circuit-help {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.circuit-wire-editor[aria-live="polite"]:empty {
+  display: none;
+}
+
+.circuit-wire-delete {
+  border-color: #b94a48;
 }
 
 .circuit-remove-wire {
