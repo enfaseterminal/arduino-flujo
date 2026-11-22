@@ -1,4 +1,4 @@
-import { createCodeEditor } from "./editor/code-editor.js";
+import { createLazyCodeEditor } from "./editor/lazy-code-editor.js";
 import { initializeEditorControls } from "./editor/editor-controls.js";
 import { blinkExample } from "./examples/arduino-examples.js";
 import { analyzeSource } from "./analyzer/analyzer.js";
@@ -130,7 +130,7 @@ function readSavedCode() {
 }
 
 let saveWarningShown = false;
-const editor = createCodeEditor(
+const editor = createLazyCodeEditor(
   document.querySelector("#editor-host"),
   readSavedCode() ?? blinkExample,
   (code) => {
@@ -150,6 +150,11 @@ const editor = createCodeEditor(
     document.querySelector("#line-count").textContent = `${count} ${count === 1 ? "línea" : "líneas"}`;
   },
   onEditorSelection,
+  {
+    onLoadError(error) {
+      status.setStatus(`No se pudo cargar el editor avanzado; puedes seguir editando en el campo de texto. ${error.message}`, "warning");
+    },
+  },
 );
 visualLabelStore.setSource(editor.getValue());
 const circuitLab = createCircuitLab(

@@ -141,6 +141,12 @@ export function createCodeEditor(parent, initialValue, onChange, onLineCount, on
       view.dispatch({ effects: setFlowchartHighlight.of(null) });
     },
     getSelection: () => view.state.selection.main,
+    setSelection(anchor, head = anchor) {
+      const length = view.state.doc.length;
+      const safeAnchor = Math.max(0, Math.min(length, anchor));
+      const safeHead = Math.max(0, Math.min(length, head));
+      view.dispatch({ selection: { anchor: safeAnchor, head: safeHead } });
+    },
     destroy() {
       destroyed = true;
       view.destroy();

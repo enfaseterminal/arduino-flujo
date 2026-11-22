@@ -41,4 +41,17 @@ describe("CodeMirror flowchart navigation", () => {
     editor.clearHighlight();
     expect(mount.querySelector(".cm-flowchart-highlight-line")).toBeNull();
   });
+
+  it("restores forward and backward selections by anchor and head", () => {
+    const mount = document.createElement("div");
+    document.body.append(mount);
+    mounts.push(mount);
+    const editor = createCodeEditor(mount, "0123456789", () => {}, () => {});
+    editors.push(editor);
+
+    editor.setSelection(8, 3);
+    expect(editor.getSelection()).toMatchObject({ anchor: 8, head: 3, from: 3, to: 8 });
+    editor.setSelection(2, 7);
+    expect(editor.getSelection()).toMatchObject({ anchor: 2, head: 7, from: 2, to: 7 });
+  });
 });
