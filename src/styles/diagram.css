@@ -115,6 +115,23 @@
   text-decoration: underline;
 }
 
+.flow-node.is-source-active .flow-node-shape {
+  stroke: var(--accent);
+  stroke-width: 3.5;
+  stroke-dasharray: none;
+  filter: drop-shadow(0 0 5px var(--accent));
+}
+
+.flow-node.is-source-active .flow-node-label {
+  fill: var(--accent);
+  font-weight: 700;
+}
+
+.flow-node.is-selected.is-source-active .flow-node-shape {
+  stroke-dasharray: 8 3;
+  filter: drop-shadow(0 0 6px var(--accent));
+}
+
 .selection-details {
   max-height: 190px;
   flex: 0 0 auto;

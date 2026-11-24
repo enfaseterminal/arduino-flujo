@@ -11,10 +11,11 @@ import {
   renderFlowchart,
   highlightSimulationFlow,
   selectFlowNode,
+  setSourceActiveNode,
 } from "./flowchart/svg-renderer.js";
+import { createEditorDiagramSync } from "./ui/editor-diagram-sync.js";
 import {
   createSelectionModel,
-  findDiagramNodeAtPosition,
   renderSelectionDetails,
 } from "./ui/diagram-selection.js";
 import { renderAnalysisReport } from "./ui/diagnostics-panel.js";
@@ -156,6 +157,11 @@ const editor = createLazyCodeEditor(
     },
   },
 );
+const editorDiagramSync = createEditorDiagramSync({
+  editor,
+  getNodes: () => generatedFlowcharts?.diagrams.flatMap((diagram) => diagram.nodes) ?? [],
+  setActiveNode: (nodeId) => setSourceActiveNode(diagramSvg, nodeId),
+});
 visualLabelStore.setSource(editor.getValue());
 const circuitLab = createCircuitLab(
   document.querySelector("#circuit-laboratory"),
@@ -263,15 +269,15 @@ selectionModel.subscribe((selection, origin) => {
   if (selection.origin === "diagram" && selection.sourceNavigable) {
     if (window.matchMedia?.("(max-width: 760px)").matches) {
       document.querySelector('.mobile-tab[data-view="editor"]')?.click();
-      editor.focus();
     }
-    editor.scrollToLine(selection.startLine);
+    editorDiagramSync.syncFromDiagramNode(selection);
   } else if (selection.origin === "editor" && selection.sourceNavigable) {
     diagramViewport.centerOn(selection.bounds);
   }
 });
 
 function onEditorSelection({ line, position }) {
+  if (editorDiagramSync.isProgrammatic) return;
   if (
     !generatedFlowcharts ||
     !latestAnalysis ||
@@ -279,22 +285,21 @@ function onEditorSelection({ line, position }) {
   ) {
     return;
   }
-  const match = findDiagramNodeAtPosition(
-    latestAnalysis.ast,
-    generatedFlowcharts.diagrams,
-    position,
-    line,
+  const node = editorDiagramSync.syncFromEditorLine(line);
+  const diagram = node && generatedFlowcharts.diagrams.find((item) =>
+    item.nodes.some((candidate) => candidate.id === node.id),
   );
-  if (!match || (match.node.kind === "comment" && !showComments.checked)) {
+  if (!node || !diagram || (node.kind === "comment" && !showComments.checked)) {
     selectionModel.clear("editor");
     return;
   }
-  if (diagramFunction.value !== match.diagram.id) {
+  if (diagramFunction.value !== diagram.id) {
     invalidateSimulation("La función activa cambió; inicia una simulación nueva.");
-    diagramFunction.value = match.diagram.id;
+    diagramFunction.value = diagram.id;
     renderSelectedDiagram({ fit: false, preserveScale: true });
+    editorDiagramSync.syncFromEditorLine(line);
   }
-  selectionModel.select(createBlockSelection(match.diagram, match.node, "editor", line), "editor");
+  selectionModel.select(createBlockSelection(diagram, node, "editor", line), "editor");
 }
 
 function updateDiagramStatus(label, state) {
@@ -412,6 +417,9 @@ function renderPresentationDiagram(diagram, { fit = false, preserveScale = true 
   displayedDiagram = createVisualDiagram(diagram, visualLabelStore, layoutDiagram);
   const bounds = renderFlowchart(diagramSvg, displayedDiagram, { showComments: showComments.checked });
   diagramViewport.setBounds(bounds, { fit, preserveScale });
+  const cursor = editor.getSelection().head;
+  const activeLine = editor.getValue().slice(0, cursor).split(/\r\n|\r|\n/).length;
+  editorDiagramSync.syncFromEditorLine(activeLine);
   const current = selectionModel.current;
   if (current?.diagramId === diagram.id && !selectFlowNode(diagramSvg, current.diagramNodeId)) {
     selectionModel.clear("comments-hidden");

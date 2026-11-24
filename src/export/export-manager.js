@@ -63,7 +63,7 @@ export function sanitizeClone(root) {
         element.removeAttribute(attribute.name);
       }
     }
-    element.classList?.remove("is-selected", "is-simulation-active", "is-simulation-traversed");
+    element.classList?.remove("is-selected", "is-source-active", "is-simulation-active", "is-simulation-traversed");
   }
 }
 

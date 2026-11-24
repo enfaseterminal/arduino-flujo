@@ -4,6 +4,17 @@ function lineCount(value) {
   return String(value).split("\n").length;
 }
 
+function positionForLine(value, lineNumber) {
+  const text = String(value);
+  const target = Math.max(1, Math.trunc(lineNumber) || 1);
+  if (target === 1) return 0;
+  let line = 1;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === "\n" && ++line === target) return index + 1;
+  }
+  return text.length;
+}
+
 function selectionFor(textarea) {
   const start = textarea.selectionStart ?? 0;
   const end = textarea.selectionEnd ?? start;
@@ -145,6 +156,15 @@ export function createLazyCodeEditor(
       if (editor) return editor.scrollToLine(lineNumber);
       return ensureLoaded().then((mounted) => mounted?.scrollToLine(lineNumber));
     },
+    selectLine(lineNumber) {
+      if (editor) return editor.selectLine(lineNumber);
+      const position = positionForLine(textarea.value, lineNumber);
+      textarea.setSelectionRange(position, position);
+      const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 22;
+      textarea.scrollTop = Math.max(0, (Math.max(1, Math.trunc(lineNumber) || 1) - 1) * lineHeight);
+      notifySelection();
+      return position;
+    },
     clearHighlight() {
       return editor?.clearHighlight();
     },
@@ -158,6 +178,17 @@ export function createLazyCodeEditor(
         to: Math.max(anchor, head),
         empty: anchor === head,
       };
+    },
+    setSelection(anchor, head = anchor) {
+      if (editor) return editor.setSelection(anchor, head);
+      const start = Math.min(anchor, head);
+      const end = Math.max(anchor, head);
+      textarea.setSelectionRange(start, end, anchor > head ? "backward" : "forward");
+      notifySelection();
+    },
+    insertCompletion(label) {
+      if (editor) return editor.insertCompletion?.(label) ?? false;
+      return ensureLoaded({ focus: true }).then((mounted) => mounted?.insertCompletion?.(label) ?? false);
     },
     load: () => ensureLoaded({ focus: document.activeElement === textarea }),
     whenReady: () => loadingPromise ?? Promise.resolve(editor),

@@ -460,6 +460,18 @@ export function selectFlowNode(svg, nodeId, { focus = false } = {}) {
   return selected;
 }
 
+/** Marca un nodo por sincronización con el cursor sin alterar selección ni foco. */
+export function setSourceActiveNode(svg, nodeId) {
+  let active = null;
+  for (const node of svg.querySelectorAll(".flow-node")) {
+    const isActive = Boolean(nodeId) && node.dataset.nodeId === nodeId;
+    node.classList.toggle("is-source-active", isActive);
+    node.setAttribute("data-source-active", String(isActive));
+    if (isActive) active = node;
+  }
+  return active;
+}
+
 export function highlightSimulationFlow(svg, nodeId, edgeId) {
   for (const node of svg.querySelectorAll(".flow-node")) {
     node.classList.toggle("is-simulation-active", Boolean(nodeId) && node.dataset.nodeId === nodeId);

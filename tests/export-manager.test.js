@@ -112,7 +112,7 @@ void helper() { // helper note
   it("creates a self-contained SVG with source blocks, connections, comments, and full bounds", () => {
     const { svg, diagram } = renderSource(source);
     const selected = svg.querySelector(".flow-node");
-    selected.classList.add("is-selected");
+    selected.classList.add("is-selected", "is-source-active");
     const exported = createExportSvg(svg, diagram.bounds, { includeGrid: true });
 
     expect(exported.querySelector(".flowchart-content")).not.toBeNull();
@@ -126,6 +126,7 @@ void helper() { // helper note
     expect(exported.querySelector("#flow-export-grid")).not.toBeNull();
     expect(exported.querySelector("style").textContent).toContain(".flow-edge-path");
     expect(exported.querySelector(".is-selected")).toBeNull();
+    expect(exported.querySelector(".is-source-active")).toBeNull();
     expect(exported.getAttribute("width")).toBe(`${diagram.bounds.width + 64}px`);
     const legend = createSymbolLegend(svg.querySelector(".flowchart-content"), diagram.bounds.width);
     expect(exported.querySelector(".flow-symbol-legend text").textContent).toBe(

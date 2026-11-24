@@ -61,6 +61,50 @@
   background: var(--selection-background) !important;
 }
 
+.cm-editor.cm-focused {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.cm-arduino-completions {
+  position: absolute;
+  z-index: 20;
+  box-sizing: border-box;
+  width: min(360px, calc(100% - 24px));
+  max-height: 240px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface, var(--editor-background));
+  color: var(--text-primary);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 24%);
+  font: 12px/1.4 system-ui, sans-serif;
+}
+
+.cm-arduino-completions[hidden] {
+  display: none;
+}
+
+.cm-arduino-completion-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.cm-arduino-completion-option span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.cm-arduino-completion-option[aria-selected="true"] {
+  outline: 2px solid var(--accent);
+  background: var(--editor-active-line);
+}
+
 .cm-editor .cm-flowchart-highlight-line {
   background: color-mix(in srgb, var(--accent) 15%, transparent);
   box-shadow: inset 3px 0 var(--accent);

@@ -29,6 +29,13 @@ function commentsOf(node) {
   }));
 }
 
+function sourceLineRange(startLine, endLine) {
+  if (!Number.isInteger(startLine) || startLine < 1 || !Number.isInteger(endLine) || endLine < startLine) {
+    return { startLine: null, endLine: null, line: null };
+  }
+  return { startLine, endLine, line: startLine };
+}
+
 function createFunctionDiagram(astNode, source, descriptor) {
   const nodes = [];
   const edges = [];
@@ -37,16 +44,19 @@ function createFunctionDiagram(astNode, source, descriptor) {
   let nextEdgeId = 1;
 
   function addNode(ast, kind, label, options = {}) {
+    const lineRange = sourceLineRange(
+      options.startLine ?? ast?.startLine ?? descriptor.startLine,
+      options.endLine ?? ast?.endLine ?? ast?.startLine ?? descriptor.endLine ?? descriptor.startLine,
+    );
     const node = {
       id: options.id ?? `flow-${ast?.id ?? descriptor.id}-${options.suffix ?? kind}`,
       kind,
       label,
-      startLine: ast?.startLine ?? descriptor.startLine,
-      endLine: ast?.endLine ?? ast?.startLine ?? descriptor.startLine,
+      ...lineRange,
       start: ast?.start ?? descriptor.start,
       end: ast?.end ?? descriptor.end,
-      astStartLine: ast?.startLine ?? descriptor.startLine,
-      astEndLine: ast?.endLine ?? ast?.startLine ?? descriptor.startLine,
+      astStartLine: lineRange.startLine,
+      astEndLine: lineRange.endLine,
       astNodeId: ast?.id ?? null,
       astType: ast?.type ?? null,
       sourceNavigable:
@@ -55,6 +65,7 @@ function createFunctionDiagram(astNode, source, descriptor) {
       functionName: descriptor.name,
       comments: commentsOf(ast),
       ...options,
+      ...lineRange,
     };
     delete node.suffix;
     nodes.push(node);

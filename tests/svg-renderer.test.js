@@ -9,6 +9,7 @@ import {
   renderDiagramMessage,
   renderFlowchart,
   selectFlowNode,
+  setSourceActiveNode,
 } from "../src/flowchart/svg-renderer.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -116,6 +117,13 @@ describe("SVG renderer", () => {
     expect(target.classList.contains("is-selected")).toBe(true);
     expect(target.getAttribute("aria-pressed")).toBe("true");
     expect(target.getAttribute("tabindex")).toBe("0");
+    const another = [...svg.querySelectorAll(".flow-node")].find((node) => node !== target);
+    expect(setSourceActiveNode(svg, another.dataset.nodeId)).toBe(another);
+    expect(target.classList.contains("is-selected")).toBe(true);
+    expect(target.classList.contains("is-source-active")).toBe(false);
+    expect(another.classList.contains("is-source-active")).toBe(true);
+    expect(setSourceActiveNode(svg, null)).toBeNull();
+    expect(another.classList.contains("is-source-active")).toBe(false);
     target.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     expect([...svg.querySelectorAll(".flow-node")].filter((node) =>
       node.getAttribute("tabindex") === "0",
