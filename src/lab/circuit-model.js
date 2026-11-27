@@ -169,6 +169,44 @@ function endpointExists(circuit, endpoint) {
   return Boolean(component && componentTerminalIds(component).includes(endpoint.slice(separator + 1)));
 }
 
+const PROJECT_CIRCUIT_KEYS = new Set(["version", "components", "visual", "wires"]);
+const PROJECT_COMPONENT_PROPERTIES = {
+  led: ["color"], rgbLed: [], resistor: ["ohms", "tolerance", "bandCount"], button: ["pressed"],
+  potentiometer: ["value"], photoresistor: ["value"], servo: ["angle"], irSensor: ["detected"],
+};
+
+/** Strict validator used by portable project files; never mutates model state. */
+export function validateCircuitProjectState(value) {
+  const fail = () => { throw new TypeError("El montaje del proyecto no cumple el esquema compatible."); };
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      Object.keys(value).some((key) => !PROJECT_CIRCUIT_KEYS.has(key)) ||
+      value.version !== CIRCUIT_VERSION || !Array.isArray(value.components) ||
+      value.components.length > 12 || !Array.isArray(value.wires) ||
+      !value.visual || typeof value.visual !== "object" || Array.isArray(value.visual) ||
+      !value.visual.positions || typeof value.visual.positions !== "object" || Array.isArray(value.visual.positions)) fail();
+  const circuit = normalizedCircuit(value);
+  if (!circuit || circuit.components.some((component) =>
+    !isComponentType(component.type) || !hasValidComponentProperties(component.type, component.properties)
+  )) fail();
+  const componentIds = new Set(circuit.components.map(({ id }) => id));
+  if (Object.keys(value.visual.positions).length !== componentIds.size ||
+      Object.keys(value.visual.positions).some((id) => !componentIds.has(id) || !validPosition(value.visual.positions[id])) ||
+      Object.keys(value.visual.positions).some((id) => Object.keys(value.visual.positions[id] ?? {}).some((key) => !["x", "y"].includes(key))) ||
+      Object.keys(value.visual).some((key) => key !== "positions") ||
+      value.components.some((component) => Object.keys(component).some((key) => !["id", "type", "properties"].includes(key)) ||
+        !component.properties || Object.keys(component.properties).length !== PROJECT_COMPONENT_PROPERTIES[component.type].length ||
+        Object.keys(component.properties).some((key) => !PROJECT_COMPONENT_PROPERTIES[component.type].includes(key))) ||
+      value.wires.some((wire) => Object.keys(wire).some((key) => !["id", "from", "to"].includes(key)))) fail();
+  const seenConnections = new Set();
+  for (const wire of circuit.wires) {
+    if (!endpointExists(circuit, wire.from) || !endpointExists(circuit, wire.to)) fail();
+    const pair = [wire.from, wire.to].sort().join("\u0000");
+    if (seenConnections.has(pair)) fail();
+    seenConnections.add(pair);
+  }
+  return circuit;
+}
+
 function validateWireEndpoints(circuit, from, to, excludedWireId = null) {
   if (
     typeof from !== "string" ||
@@ -345,15 +383,33 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
 
   function createInitialInputs() {
     return Object.fromEntries(state.components
-      .filter((component) => component.type === "button" || component.type === "potentiometer")
+      .filter((component) => ["button", "potentiometer", "photoresistor", "servo", "irSensor"].includes(component.type))
       .map((component) => [
         component.id,
-        component.type === "button" ? Boolean(component.properties.pressed) : Number(component.properties.value),
+        component.type === "button"
+          ? Boolean(component.properties.pressed)
+          : component.type === "irSensor" ? Boolean(component.properties.detected)
+          : component.type === "servo" ? Number(component.properties.angle) : Number(component.properties.value),
       ]));
+  }
+
+  function createInitialServoAngles() {
+    return Object.fromEntries(state.components
+      .filter((component) => component.type === "servo")
+      .map((component) => [component.id, Number(component.properties.angle)]));
   }
 
   return {
     getState: snapshot,
+    replaceState(nextState) {
+      const replacement = validateCircuitProjectState(nextState);
+      const before = snapshot();
+      state = replacement;
+      nextId = nextAvailableId(state);
+      past.length = 0;
+      future.length = 0;
+      return update("topology", before, false);
+    },
     canUndo: () => past.length > 0,
     canRedo: () => future.length > 0,
     undo() {
@@ -382,6 +438,16 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
     },
     getWires: () => state.wires.map((wire) => cloneValue(wire)),
     getInitialInputs: createInitialInputs,
+    getInitialServoAngles: createInitialServoAngles,
+    getServoForPin(pin) {
+      const normalizedPin = String(pin).toUpperCase().replace(/^D/, "");
+      const endpoint = `arduino:D${normalizedPin}`;
+      if (!DIGITAL_PINS.has(endpoint.slice("arduino:".length))) return null;
+      return state.components.find((component) => component.type === "servo" &&
+        wireReachable(state, `${component.id}:signal`, endpoint) &&
+        wireReachable(state, `${component.id}:vcc`, "arduino:5V") &&
+        wireReachable(state, `${component.id}:gnd`, "arduino:GND"))?.id ?? null;
+    },
     addComponent(type) {
       if (!isComponentType(type)) throw new TypeError("Tipo de componente desconocido.");
       if (state.components.length >= 12) throw new RangeError("El montaje admite hasta 12 componentes.");
@@ -451,10 +517,20 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
       } else if (component.type === "button" && name === "pressed" && typeof value === "boolean") {
         component.properties.pressed = value;
         return { ...update("input", before, false), component: componentForConsumer(component) };
-      } else if (component.type === "potentiometer" && name === "value") {
+      } else if (component.type === "irSensor" && name === "detected" && typeof value === "boolean") {
+        component.properties.detected = value;
+        return { ...update("input", before, false), component: componentForConsumer(component) };
+      } else if (["potentiometer", "photoresistor"].includes(component.type) && name === "value") {
         const parsed = Number(value);
         if (!Number.isInteger(parsed) || parsed < 0 || parsed > 1023) throw new RangeError("El valor debe estar entre 0 y 1023.");
         component.properties.value = parsed;
+        return { ...update("input", before, false), component: componentForConsumer(component) };
+      } else if (component.type === "servo" && name === "angle") {
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed) || parsed < 0 || parsed > 180) {
+          throw new RangeError("El ángulo debe ser un entero entre 0 y 180 grados.");
+        }
+        component.properties.angle = parsed;
         return { ...update("input", before, false), component: componentForConsumer(component) };
       } else {
         throw new TypeError("Propiedad de componente no válida.");
@@ -506,6 +582,12 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
           if (!wiredToPin || !graphPath(edges, `${component.id}:cathode`, "arduino:GND")) {
             warnings.push(`${component.id}: conecta el ánodo a una salida a través de una resistencia y el cátodo a GND.`);
           }
+        } else if (component.type === "rgbLed") {
+          const commonGround = wireReachable(state, `${component.id}:cathode`, "arduino:GND");
+          const channelsWired = ["red", "green", "blue"].every((channel) => [...DIGITAL_PINS].some((pin) =>
+            graphPath(circuitGraph(state, createInitialInputs()), `arduino:${pin}`, `${component.id}:${channel}`, true),
+          ));
+          if (!commonGround || !channelsWired) warnings.push(`${component.id}: conecta cada canal R, G y B a una salida a través de una resistencia y el común a GND.`);
         } else if (component.type === "button") {
           const first = `${component.id}:contact1`;
           const second = `${component.id}:contact2`;
@@ -516,11 +598,32 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
             (wireReachable(state, second, pin) && rails.some((rail) => wireReachable(state, first, rail))),
           );
           if (!valid) warnings.push(`${component.id}: conecta un contacto a un pin digital y el otro a GND o 5V.`);
+        } else if (component.type === "irSensor") {
+          const signalConnected = [...DIGITAL_PINS].some((pin) => wireReachable(state, `${component.id}:signal`, `arduino:${pin}`));
+          const powered = wireReachable(state, `${component.id}:vcc`, "arduino:5V") && wireReachable(state, `${component.id}:gnd`, "arduino:GND");
+          if (!signalConnected || !powered) warnings.push(`${component.id}: conecta VCC a 5V, GND a GND y OUT a un pin digital.`);
         } else if (component.type === "potentiometer") {
           const valid = [...ANALOG_PINS].some((pin) =>
             this.readInput("analogRead", pin.slice(1), {}, createInitialInputs()).known,
           );
           if (!valid) warnings.push(`${component.id}: conecta el wiper a A0–A5 y los extremos a 5V y GND.`);
+        } else if (component.type === "photoresistor") {
+          const signal = `${component.id}:signal`;
+          const powered = wireReachable(state, `${component.id}:vcc`, "arduino:5V") &&
+            wireReachable(state, `${component.id}:gnd`, "arduino:GND");
+          const analogConnected = [...ANALOG_PINS].some((pin) => wireReachable(state, signal, `arduino:${pin}`));
+          if (!powered || !analogConnected) {
+            warnings.push(`${component.id}: conecta VCC a 5V, GND a GND y AO a una entrada A0–A5.`);
+          }
+        } else if (component.type === "servo") {
+          const signalConnected = [...DIGITAL_PINS].some((pin) =>
+            wireReachable(state, `${component.id}:signal`, `arduino:${pin}`),
+          );
+          const powered = wireReachable(state, `${component.id}:vcc`, "arduino:5V") &&
+            wireReachable(state, `${component.id}:gnd`, "arduino:GND");
+          if (!signalConnected || !powered) {
+            warnings.push(`${component.id}: conecta VCC a 5V, GND a GND y SIG a un pin digital.`);
+          }
         }
       }
       for (const wire of state.wires) {
@@ -552,6 +655,24 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
       }
       return result;
     },
+    getRgbLedStates(pinStates = {}) {
+      const edges = circuitGraph(state, createInitialInputs());
+      const result = {};
+      for (const component of state.components.filter((item) => item.type === "rgbLed")) {
+        const commonGround = graphPath(edges, `${component.id}:cathode`, "arduino:GND");
+        const channels = {};
+        for (const channel of ["red", "green", "blue"]) {
+          const pin = [...DIGITAL_PINS].find((candidate) => {
+            const stateForPin = pinStates[candidate.slice(1)];
+            return stateForPin && graphPath(edges, `arduino:${candidate}`, `${component.id}:${channel}`, true);
+          });
+          const value = pin ? Number(pinStates[pin.slice(1)].value) : 0;
+          channels[channel] = commonGround && pin ? Math.max(0, Math.min(255, value === 1 ? 255 : value)) : 0;
+        }
+        result[component.id] = { ...channels, active: commonGround && Object.values(channels).some((value) => value > 0) };
+      }
+      return result;
+    },
     readInput(callName, pin, pinStates = {}, inputs = createInitialInputs()) {
       if (callName === "digitalRead") {
         const endpoint = digitalEndpoint(pin);
@@ -575,7 +696,11 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
           if (!pressed) continue;
           return { known: true, value: rail === "5V" ? 1 : 0 };
         }
-        return { known: false, reason: `No hay un pulsador conectado de forma válida al pin ${pin}.` };
+        for (const sensor of state.components.filter((item) => item.type === "irSensor")) {
+          const powered = wireReachable(state, `${sensor.id}:vcc`, "arduino:5V") && wireReachable(state, `${sensor.id}:gnd`, "arduino:GND");
+          if (powered && wireReachable(state, `${sensor.id}:signal`, endpoint)) return { known: true, value: inputs[sensor.id] ? 1 : 0 };
+        }
+        return { known: false, reason: `No hay una entrada digital virtual conectada de forma válida al pin ${pin}.` };
       }
       if (callName === "analogRead") {
         const endpoint = `arduino:${String(pin).toUpperCase()}`;
@@ -594,7 +719,15 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
             return { known: true, value: Number(inputs[potentiometer.id]) };
           }
         }
-        return { known: false, reason: `No hay un potenciómetro conectado de forma válida al pin ${pin}.` };
+        for (const sensor of state.components.filter((item) => item.type === "photoresistor")) {
+          const signal = `${sensor.id}:signal`;
+          const powered = wireReachable(state, `${sensor.id}:vcc`, "arduino:5V") &&
+            wireReachable(state, `${sensor.id}:gnd`, "arduino:GND");
+          if (powered && wireReachable(state, signal, endpoint)) {
+            return { known: true, value: Number(inputs[sensor.id]) };
+          }
+        }
+        return { known: false, reason: `No hay un sensor analógico conectado de forma válida al pin ${pin}.` };
       }
       return { known: false, reason: "Entrada virtual no admitida." };
     },

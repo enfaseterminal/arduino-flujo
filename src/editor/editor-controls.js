@@ -1,7 +1,27 @@
-import { blinkExample } from "../examples/arduino-examples.js";
+import { guidedExamples } from "../examples/guided-examples.js";
 
 export function initializeEditorControls({ editor, elements, setStatus }) {
   let fileName = "arduino-flowchart.ino";
+
+  const exampleSelect = elements.exampleSelect;
+  const exampleGuidance = elements.exampleGuidance;
+  if (exampleSelect) {
+    exampleSelect.replaceChildren(...guidedExamples.map(({ id, title }) => {
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = title;
+      return option;
+    }));
+    exampleSelect.value = guidedExamples[0].id;
+  }
+  function updateExampleGuidance() {
+    const example = guidedExamples.find(({ id }) => id === exampleSelect?.value) ?? guidedExamples[0];
+    if (exampleGuidance) {
+      exampleGuidance.textContent = `${example.description} ${example.wiring} ${example.observe}`;
+    }
+  }
+  exampleSelect?.addEventListener("change", updateExampleGuidance);
+  updateExampleGuidance();
 
   elements.paste.addEventListener("click", async () => {
     if (!navigator.clipboard?.readText) {
@@ -18,9 +38,10 @@ export function initializeEditorControls({ editor, elements, setStatus }) {
   });
 
   elements.loadExample.addEventListener("click", () => {
-    editor.setValue(blinkExample);
-    fileName = "arduino-flowchart.ino";
-    setStatus("Ejemplo Arduino cargado. Los comentarios del código se conservan.");
+    const example = guidedExamples.find(({ id }) => id === exampleSelect?.value) ?? guidedExamples[0];
+    editor.setValue(example.code);
+    fileName = `${example.id}.ino`;
+    setStatus(`Ejemplo «${example.title}» cargado. ${example.observe}`);
   });
 
   elements.clear.addEventListener("click", () => {

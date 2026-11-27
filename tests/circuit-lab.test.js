@@ -44,6 +44,9 @@ function createRoot() {
     <button id="circuit-clear" type="button"></button>
     <button type="button" data-add-component="led"></button>
     <button type="button" data-add-component="button"></button>
+    <button type="button" data-add-component="potentiometer"></button>
+    <button type="button" data-add-component="photoresistor"></button>
+    <button type="button" data-add-component="servo"></button>
   `;
   document.body.append(root);
   return root;
@@ -82,8 +85,12 @@ describe("circuit lab interface", () => {
 
     root.querySelector('[data-add-component="button"]').click();
     const button = model.getComponents()[0];
+    expect(getComponentTerminals("button").map(({ id }) => id)).toEqual(["contact1", "contact2"]);
+    expect(root.querySelector(`[data-component-id="${button.id}"]`).dataset.state).toBe("released");
     root.querySelector('[data-property="pressed"]').click();
     expect(model.getInitialInputs()[button.id]).toBe(true);
+    expect(root.querySelector(`[data-component-id="${button.id}"]`).dataset.state).toBe("pressed");
+    expect(root.querySelector('[data-property="pressed"]').getAttribute("aria-pressed")).toBe("true");
     expect(changes.at(-1).changeType).toBe("input");
 
     const from = root.querySelector("#circuit-wire-from");
@@ -93,6 +100,100 @@ describe("circuit lab interface", () => {
     root.querySelector("#circuit-wire-form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     expect(model.getWires()).toHaveLength(1);
     expect(root.querySelector("#circuit-wire-list").textContent).toContain("Arduino D2");
+  });
+
+  it("shows D0/RX and D1/TX with a visible serial-use warning", () => {
+    const root = createRoot();
+    createCircuitLab(root, createCircuitModel(createMemoryStorage()));
+    expect(root.querySelector('[data-terminal="arduino:D0"]').getAttribute("aria-label"))
+      .toContain("serie RX");
+    expect(root.querySelector('[data-terminal="arduino:D1"]').getAttribute("aria-label"))
+      .toContain("serie TX");
+    expect(root.querySelector('[data-terminal="arduino:D0"]').getAttribute("title"))
+      .toContain("serie hardware");
+  });
+
+  it("adds and edits a photoresistor module and renders its analog simulation input", () => {
+    const root = createRoot();
+    const model = createCircuitModel(createMemoryStorage());
+    const changes = [];
+    const lab = createCircuitLab(root, model, { onChange: (change) => changes.push(change) });
+
+    root.querySelector('[data-add-component="photoresistor"]').click();
+    const sensor = model.getComponents()[0];
+    expect(sensor).toMatchObject({ type: "photoresistor", properties: { value: 512 } });
+    expect(root.querySelector(`[data-component-id="${sensor.id}"] .circuit-photoresistor-cell`)).not.toBeNull();
+    const slider = root.querySelector('[data-property="value"]');
+    slider.value = "830";
+    slider.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(model.getInitialInputs()[sensor.id]).toBe(830);
+    expect(changes.at(-1).changeType).toBe("input");
+
+    lab.updateSimulation({ pins: {}, circuitInputs: { [sensor.id]: 274 } });
+    expect(root.querySelector(`[data-component-id="${sensor.id}"]`).dataset.value).toBe("274");
+    expect(root.querySelector('[data-property="value"]').value).toBe("274");
+    expect(root.querySelector(".circuit-analog-value").value).toBe("274/1023");
+  });
+
+  it("adds a servo with a bounded angle control and reflects simulated horn snapshots", () => {
+    const root = createRoot();
+    const model = createCircuitModel(createMemoryStorage());
+    const lab = createCircuitLab(root, model);
+    root.querySelector('[data-add-component="servo"]').click();
+    const servo = model.getComponents()[0];
+    let group = root.querySelector(`[data-component-id="${servo.id}"]`);
+    expect(servo).toMatchObject({ type: "servo", properties: { angle: 90 } });
+    expect(group.querySelector(".circuit-servo-body")).not.toBeNull();
+    expect(group.querySelector("[data-servo-horn]").getAttribute("transform")).toBe("rotate(0 405 120)");
+    expect([...root.querySelectorAll("[data-terminal]")]
+      .filter((terminal) => terminal.dataset.terminal.startsWith(`${servo.id}:`))
+      .map((terminal) => terminal.dataset.terminal))
+      .toEqual([`${servo.id}:vcc`, `${servo.id}:signal`, `${servo.id}:gnd`]);
+
+    const range = root.querySelector('[data-property="angle"]');
+    expect([range.min, range.max, range.value]).toEqual(["0", "180", "90"]);
+    range.value = "35";
+    range.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(root.querySelector(".circuit-servo-angle").value).toBe("35°");
+    range.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(model.getComponents()[0].properties.angle).toBe(35);
+    group = root.querySelector(`[data-component-id="${servo.id}"]`);
+    expect(group.querySelector("[data-servo-horn]").getAttribute("transform")).toBe("rotate(-55 405 120)");
+
+    lab.updateSimulation({ pins: {}, circuitInputs: { [servo.id]: 150 }, servoAngles: { [servo.id]: 150 } });
+    expect(root.querySelector('[data-property="angle"]').value).toBe("150");
+    expect(root.querySelector(".circuit-servo-angle").value).toBe("150°");
+    expect(group.dataset.angle).toBe("150");
+    expect(group.querySelector("[data-servo-horn]").getAttribute("transform")).toBe("rotate(60 405 120)");
+  });
+
+  it("adds an interactive potentiometer with three terminals and mirrors simulated readings", () => {
+    const root = createRoot();
+    const model = createCircuitModel(createMemoryStorage());
+    const lab = createCircuitLab(root, model);
+    root.querySelector('[data-add-component="potentiometer"]').click();
+    const pot = model.getComponents()[0];
+    const group = root.querySelector(`[data-component-id="${pot.id}"]`);
+
+    expect(pot).toMatchObject({ type: "potentiometer", properties: { value: 512 } });
+    expect(group.querySelector("[data-pot-knob]")).not.toBeNull();
+    expect([...root.querySelectorAll("[data-terminal]")]
+      .filter((terminal) => terminal.dataset.terminal.startsWith(`${pot.id}:`))
+      .map((terminal) => terminal.dataset.terminal))
+      .toEqual([`${pot.id}:end1`, `${pot.id}:wiper`, `${pot.id}:end2`]);
+
+    const slider = root.querySelector('[data-property="value"]');
+    expect(slider.min).toBe("0");
+    expect(slider.max).toBe("1023");
+    slider.value = "1023";
+    slider.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(model.getInitialInputs()[pot.id]).toBe(1023);
+
+    lab.updateSimulation({ pins: {}, circuitInputs: { [pot.id]: 256 } });
+    expect(root.querySelector('[data-property="value"]').value).toBe("256");
+    expect(root.querySelector(".circuit-analog-value").value).toBe("256/1023");
+    expect(Number(root.querySelector(`[data-component-id="${pot.id}"] [data-pot-knob]`).getAttribute("cx")))
+      .toBeCloseTo(405 - 26 + (256 / 1023) * 52, 2);
   });
 
   it("renders simulation outputs without mutating the circuit model", () => {

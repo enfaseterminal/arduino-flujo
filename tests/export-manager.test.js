@@ -275,6 +275,31 @@ void helper() { // helper note
     expect(pdf.output).toHaveBeenCalledWith("blob");
   });
 
+  it("exports an optional analysis summary with counts, diagnostics, Arduino calls and scope", async () => {
+    const source = "class Device { public: void begin(); }; void loop() { Serial.println(\"ready\"); }";
+    const analysis = analyzeSource(source);
+    const { svg, diagram } = renderSource(source, "loop");
+    const pdf = createPdfStub();
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:analysis-summary");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    await exportPdf(svg, diagram.bounds, "loop", {
+      sections: { diagram: false, analysis: true },
+      analysis,
+    }, () => pdf, renderPdfStub);
+
+    const outputText = pdf.text.mock.calls.flatMap(([value]) => Array.isArray(value) ? value : [value]).join(" ");
+    expect(outputText).toContain("Resumen del análisis");
+    expect(outputText).toContain("Funciones detectadas");
+    expect(outputText).toContain("Estructuras de control");
+    expect(outputText).toContain("Advertencias");
+    expect(outputText).toContain("Serial.println");
+    expect(outputText).toContain("No se ejecuta C++ arbitrario");
+    expect(outputText).toContain("1 ·");
+    expect(pdf.output).toHaveBeenCalledWith("blob");
+  });
+
   it("uses only the implemented shapes and combines equivalent parallelograms", () => {
     const switchSource = `void setup() {
   switch (readValue()) {

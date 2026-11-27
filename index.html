@@ -69,6 +69,8 @@
 
           <div class="editor-toolbar">
             <div class="editor-toolbar-group">
+              <label class="visually-hidden" for="example-select">Ejemplo de código</label>
+              <select class="tool-button" id="example-select" aria-describedby="example-guidance"></select>
               <button class="tool-button" id="paste-code" type="button" title="Pegar desde el portapapeles">
                 <span aria-hidden="true">▣</span> Pegar
               </button>
@@ -82,6 +84,7 @@
               </button>
             </div>
           </div>
+          <p class="example-guidance" id="example-guidance" aria-live="polite"></p>
 
           <div class="editor-frame" id="editor-host" aria-label="Editor de código Arduino"></div>
           <div class="editor-footer">
@@ -391,9 +394,13 @@
                 <h3>Catálogo</h3>
                 <div class="circuit-catalog">
                   <button class="tool-button" type="button" data-add-component="led">Añadir LED</button>
+                  <button class="tool-button" type="button" data-add-component="rgbLed">Añadir LED RGB</button>
                   <button class="tool-button" type="button" data-add-component="resistor">Añadir resistencia</button>
                   <button class="tool-button" type="button" data-add-component="button">Añadir pulsador</button>
                   <button class="tool-button" type="button" data-add-component="potentiometer">Añadir potenciómetro</button>
+                  <button class="tool-button" type="button" data-add-component="photoresistor">Añadir sensor de luz</button>
+                  <button class="tool-button" type="button" data-add-component="servo">Añadir servomotor</button>
+                  <button class="tool-button" type="button" data-add-component="irSensor">Añadir sensor infrarrojo</button>
                 </div>
                 <div class="circuit-component-list" id="circuit-component-list" aria-label="Componentes del montaje"></div>
               </section>
@@ -402,7 +409,7 @@
                 <p class="circuit-empty">Selecciona un componente en el montaje para ver sus propiedades.</p>
               </section>
               <p class="circuit-disclaimer">
-                Este laboratorio representa conexiones lógicas. No calcula corriente o tensión real, no ejecuta C++ y no controla hardware.
+                Arduino Uno: D0 (RX) y D1 (TX) son pines digitales y están disponibles en el montaje. También se usan para la comunicación serie hardware; conectarlos puede interferir con la carga del programa y con Serial. El laboratorio representa conexiones lógicas: no calcula corriente o tensión real, no ejecuta C++ y no controla hardware.
               </p>
             </aside>
           </div>
@@ -451,6 +458,11 @@
               <button class="tool-button export-format" type="button" data-export-format="pdf" disabled>
                 Exportar PDF
               </button>
+              <span class="export-menu-divider" aria-hidden="true"></span>
+              <button class="tool-button" type="button" id="export-education-project">Exportar proyecto JSON</button>
+              <button class="tool-button" type="button" id="import-education-project">Importar proyecto JSON</button>
+              <input class="visually-hidden" id="education-project-input" type="file" accept=".json,application/json"
+                aria-label="Seleccionar archivo de proyecto educativo JSON" tabindex="-1" />
             </div>
           </details>
         </div>
@@ -488,6 +500,7 @@
           <legend>Secciones del documento</legend>
           <label><input type="checkbox" name="section-diagram" checked /> Diagrama de flujo</label>
           <label><input type="checkbox" name="section-code" checked /> Código fuente</label>
+          <label><input type="checkbox" name="section-analysis" checked /> Resumen del análisis y diagnóstico</label>
           <label><input type="checkbox" name="section-circuit" checked /> Montaje electrónico</label>
           <label><input type="checkbox" name="section-components" checked /> Listado de componentes</label>
           <label><input type="checkbox" name="section-connections" checked /> Conexiones y cableado</label>

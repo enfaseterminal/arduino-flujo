@@ -293,6 +293,40 @@ describe("circuit lab simulation integration", () => {
     expect(engine.state.events.some((event) => event.message.includes("734"))).toBe(true);
   });
 
+  it("uses a connected photoresistor module reading for analogRead and snapshots it", () => {
+    const circuit = createCircuitModel(createStorage());
+    const sensor = circuit.addComponent("photoresistor").component;
+    circuit.addWire("arduino:5V", `${sensor.id}:vcc`);
+    circuit.addWire(`${sensor.id}:signal`, "arduino:A1");
+    circuit.addWire(`${sensor.id}:gnd`, "arduino:GND");
+    circuit.updateProperty(sensor.id, "value", 817);
+    const engine = createEngine("void setup() { int light = analogRead(A1); }", circuit);
+    engine.start();
+    engine.stepForward();
+    engine.stepForward();
+
+    expect(engine.state.status).toBe("completed");
+    expect(engine.state.circuitInputs[sensor.id]).toBe(817);
+    expect(engine.findVariable("light").scope.variables.light.value).toBe(817);
+    expect(engine.state.events.some((event) => event.message.includes("817"))).toBe(true);
+  });
+
+  it("attaches and moves a wired servo through Servo.write snapshots", () => {
+    const circuit = createCircuitModel(createStorage());
+    const servo = circuit.addComponent("servo").component;
+    circuit.addWire("arduino:5V", `${servo.id}:vcc`);
+    circuit.addWire(`${servo.id}:signal`, "arduino:D9");
+    circuit.addWire(`${servo.id}:gnd`, "arduino:GND");
+    const engine = createEngine("void setup() { Servo motor; motor.attach(9); motor.write(135); }", circuit);
+    engine.start();
+    for (let step = 0; step < 6 && engine.state.status !== "completed"; step += 1) engine.stepForward();
+
+    expect(engine.state.status).toBe("completed");
+    expect(engine.getState().servoAngles[servo.id]).toBe(135);
+    expect(engine.getState().circuitInputs[servo.id]).toBe(135);
+    expect(engine.state.events.some((event) => event.message.includes("Ángulo actualizado a 135°"))).toBe(true);
+  });
+
   it("keeps disconnected sensor values unknown and falls back to explicit manual input", () => {
     const circuit = createCircuitModel(createStorage());
     circuit.addComponent("potentiometer");

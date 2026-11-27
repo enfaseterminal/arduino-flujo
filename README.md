@@ -16,7 +16,7 @@ La aplicación se ejecuta en el navegador y no necesita backend. El código del 
 - Selección sincronizada entre código y diagrama, con etiquetas visuales personalizables.
 - Exportación de diagramas como SVG, PNG o PDF multipágina.
 - Simulador reversible con variables, entradas simuladas, consola serie y monitor de pines.
-- Laboratorio visual con Arduino, LED, resistencias, pulsadores y potenciómetro.
+- Laboratorio visual con Arduino, LED, LED RGB, resistencias, pulsadores, potenciómetro, sensores de luz e infrarrojos y servomotor.
 - Tema claro/oscuro y almacenamiento local, sin cuenta ni servicio remoto.
 
 ## Requisitos

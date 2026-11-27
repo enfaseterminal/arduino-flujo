@@ -23,13 +23,21 @@ describe("circuit model", () => {
     const resistor = model.addComponent("resistor").component;
     const button = model.addComponent("button").component;
     const potentiometer = model.addComponent("potentiometer").component;
+    const photoresistor = model.addComponent("photoresistor").component;
+    const servo = model.addComponent("servo").component;
+    const rgbLed = model.addComponent("rgbLed").component;
+    const irSensor = model.addComponent("irSensor").component;
 
-    expect([led.type, resistor.type, button.type, potentiometer.type])
-      .toEqual(["led", "resistor", "button", "potentiometer"]);
+    expect([led.type, resistor.type, button.type, potentiometer.type, photoresistor.type, servo.type, rgbLed.type, irSensor.type])
+      .toEqual(["led", "resistor", "button", "potentiometer", "photoresistor", "servo", "rgbLed", "irSensor"]);
     expect(led.properties.color).toBe("rojo");
     expect(resistor.properties).toMatchObject({ ohms: 220, bandCount: 4, tolerance: 5 });
     expect(button.properties.pressed).toBe(false);
     expect(potentiometer.properties.value).toBe(512);
+    expect(photoresistor.properties.value).toBe(512);
+    expect(servo.properties.angle).toBe(90);
+    expect(irSensor.properties.detected).toBe(false);
+    expect(model.getInitialInputs()[photoresistor.id]).toBe(512);
   });
 
   it.each([
@@ -54,13 +62,33 @@ describe("circuit model", () => {
     ]);
     expect(getComponentTerminals("potentiometer").map(({ id }) => id))
       .toEqual(["end1", "wiper", "end2"]);
+    expect(getComponentTerminals("button").map(({ id }) => id))
+      .toEqual(["contact1", "contact2"]);
+    expect(getComponentTerminals("photoresistor").map(({ id }) => id))
+      .toEqual(["vcc", "signal", "gnd"]);
+    expect(getComponentTerminals("servo").map(({ id }) => id))
+      .toEqual(["vcc", "signal", "gnd"]);
+    expect(getComponentTerminals("rgbLed").map(({ id }) => id))
+      .toEqual(["red", "green", "blue", "cathode"]);
+    expect(getComponentTerminals("irSensor").map(({ id }) => id))
+      .toEqual(["vcc", "signal", "gnd"]);
     expect(getComponentTerminals("future-component")).toEqual([]);
     expect(getArduinoTerminals().map(({ id }) => id)).toEqual([
+      "D0",
+      "D1",
       ...Array.from({ length: 12 }, (_unused, index) => `D${index + 2}`),
       ...Array.from({ length: 6 }, (_unused, index) => `A${index}`),
       "5V",
       "GND",
     ]);
+  });
+
+  it("accepts D0 and D1 as digital connection terminals and maps RX/TX pin numbers", () => {
+    const model = createCircuitModel(createMemoryStorage());
+    const led = model.addComponent("led").component;
+    model.addWire("arduino:D0", `${led.id}:anode`);
+    model.addWire("arduino:D1", `${led.id}:cathode`);
+    expect(model.getWires().map(({ from }) => from)).toEqual(["arduino:D0", "arduino:D1"]);
   });
 
   it("allows component colors, resistor tolerance, and potentiometer values to be updated", () => {
@@ -73,6 +101,52 @@ describe("circuit model", () => {
     expect(model.getComponents().find((item) => item.id === resistor.id).properties.tolerance).toBe(2);
     expect(model.getInitialInputs()[pot.id]).toBe(1023);
     expect(() => model.updateProperty(pot.id, "value", 1024)).toThrow(RangeError);
+  });
+
+  it("validates servo angles, initializes snapshots, and resolves a fully wired digital pin", () => {
+    const model = createCircuitModel(createMemoryStorage());
+    const servo = model.addComponent("servo").component;
+    expect(model.getInitialInputs()[servo.id]).toBe(90);
+    expect(model.getInitialServoAngles()[servo.id]).toBe(90);
+    expect(model.getServoForPin(9)).toBeNull();
+    model.addWire("arduino:5V", `${servo.id}:vcc`);
+    model.addWire(`${servo.id}:signal`, "arduino:D9");
+    model.addWire(`${servo.id}:gnd`, "arduino:GND");
+    model.updateProperty(servo.id, "angle", 135);
+
+    expect(model.getServoForPin("D9")).toBe(servo.id);
+    expect(model.getInitialServoAngles()[servo.id]).toBe(135);
+    expect(model.getWarnings()).toEqual([]);
+    expect(() => model.updateProperty(servo.id, "angle", 181)).toThrow(RangeError);
+    expect(() => model.updateProperty(servo.id, "angle", "medio")).toThrow(RangeError);
+    expect(() => model.updateProperty(servo.id, "angle", 45.5)).toThrow(RangeError);
+  });
+
+  it("reads a powered digital IR sensor and reflects the simulated detection input", () => {
+    const model = createCircuitModel(createMemoryStorage());
+    const sensor = model.addComponent("irSensor").component;
+    model.addWire("arduino:5V", `${sensor.id}:vcc`);
+    model.addWire(`${sensor.id}:signal`, "arduino:D4");
+    model.addWire(`${sensor.id}:gnd`, "arduino:GND");
+    const inputs = model.getInitialInputs();
+    expect(model.readInput("digitalRead", 4, { 4: { mode: "INPUT" } }, inputs)).toEqual({ known: true, value: 0 });
+    model.updateProperty(sensor.id, "detected", true);
+    expect(model.readInput("digitalRead", 4, { 4: { mode: "INPUT" } }, model.getInitialInputs())).toEqual({ known: true, value: 1 });
+    expect(model.getWarnings()).toEqual([]);
+  });
+
+  it("maps digital and PWM pin outputs to RGB channels when each has a series resistor", () => {
+    const model = createCircuitModel(createMemoryStorage());
+    const rgb = model.addComponent("rgbLed").component;
+    for (const [channel, pin] of [["red", "D3"], ["green", "D5"], ["blue", "D6"]]) {
+      const resistor = model.addComponent("resistor").component;
+      model.addWire(`arduino:${pin}`, `${resistor.id}:lead1`);
+      model.addWire(`${resistor.id}:lead2`, `${rgb.id}:${channel}`);
+    }
+    model.addWire(`${rgb.id}:cathode`, "arduino:GND");
+    expect(model.getWarnings()).toEqual([]);
+    expect(model.getRgbLedStates({ 3: { value: 255 }, 5: { value: 80 }, 6: { value: 0 } })[rgb.id])
+      .toEqual({ red: 255, green: 80, blue: 0, active: true });
   });
 
   it("connects terminals, lists wires, removes connections, and cascades component removal", () => {
@@ -166,6 +240,18 @@ describe("circuit model", () => {
     expect(model.readInput("digitalRead", 2, { 2: { mode: "INPUT" } }, inputs).known).toBe(false);
   });
 
+  it("accepts only boolean button state and persists its pressed value", () => {
+    const storage = createMemoryStorage();
+    const model = createCircuitModel(storage);
+    const button = model.addComponent("button").component;
+    expect(() => model.updateProperty(button.id, "pressed", "yes")).toThrow(TypeError);
+    model.updateProperty(button.id, "pressed", true);
+
+    const restored = createCircuitModel(storage);
+    expect(restored.getComponents()[0].properties.pressed).toBe(true);
+    expect(restored.getInitialInputs()[button.id]).toBe(true);
+  });
+
   it("resolves analogRead from a potentiometer connected to the pin and both rails", () => {
     const model = createCircuitModel(createMemoryStorage());
     const pot = model.addComponent("potentiometer").component;
@@ -179,10 +265,30 @@ describe("circuit model", () => {
     expect(model.readInput("analogRead", "A1", {}, model.getInitialInputs()).known).toBe(false);
   });
 
+  it("resolves analogRead from a powered photoresistor module and validates its range", () => {
+    const model = createCircuitModel(createMemoryStorage());
+    const sensor = model.addComponent("photoresistor").component;
+    model.addWire("arduino:5V", `${sensor.id}:vcc`);
+    model.addWire(`${sensor.id}:signal`, "arduino:A1");
+    model.addWire(`${sensor.id}:gnd`, "arduino:GND");
+    model.updateProperty(sensor.id, "value", 817);
+
+    expect(model.readInput("analogRead", "A1", {}, model.getInitialInputs()))
+      .toEqual({ known: true, value: 817 });
+    expect(model.readInput("analogRead", "A2", {}, model.getInitialInputs()).known).toBe(false);
+    expect(model.getWarnings()).toEqual([]);
+    expect(() => model.updateProperty(sensor.id, "value", 1024)).toThrow(RangeError);
+  });
+
   it("persists and restores the versioned circuit without overwriting existing code keys", () => {
     const storage = createMemoryStorage({ "arduino-flowchart-code": "int original = 7;" });
     const first = createCircuitModel(storage);
     const button = first.addComponent("button").component;
+    first.updateProperty(button.id, "pressed", true);
+    const potentiometer = first.addComponent("potentiometer").component;
+    const servo = first.addComponent("servo").component;
+    first.updateProperty(potentiometer.id, "value", 901);
+    first.updateProperty(servo.id, "angle", 123);
     first.addWire("arduino:D2", `${button.id}:contact1`);
     const restored = createCircuitModel(storage);
 
@@ -192,6 +298,9 @@ describe("circuit model", () => {
     expect(saved.visual.positions[button.id]).toEqual(first.getComponentPosition(button.id));
     expect(restored.getComponents()).toEqual(first.getComponents());
     expect(restored.getWires()).toEqual(first.getWires());
+    expect(restored.getInitialInputs()[potentiometer.id]).toBe(901);
+    expect(restored.getInitialInputs()[button.id]).toBe(true);
+    expect(restored.getInitialServoAngles()[servo.id]).toBe(123);
     expect(storage.getItem("arduino-flowchart-code")).toBe("int original = 7;");
   });
 

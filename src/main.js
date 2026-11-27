@@ -22,8 +22,14 @@ import { renderAnalysisReport } from "./ui/diagnostics-panel.js";
 import { createStatusPanel } from "./ui/status-panel.js";
 import { initializeTheme } from "./ui/theme.js";
 import { initializeToolbar } from "./ui/toolbar.js";
-import { exportPng, exportSvg } from "./export/export-manager.js";
+import { downloadBlob, exportPng, exportSvg, sanitizeFilename } from "./export/export-manager.js";
 import { getApplicationUrl } from "./export/application-url.js";
+import {
+  createProjectDocument,
+  parseProjectJson,
+  restoreProjectDocument,
+  serializeProjectDocument,
+} from "./export/project-format.js";
 import { SimulationEngine } from "./simulator/simulation-engine.js";
 import { SimulationController } from "./simulator/simulation-controller.js";
 import { createSimulatorPanel } from "./ui/simulator-panel.js";
@@ -80,6 +86,9 @@ const visualLabelInput = document.querySelector("#visual-label-input");
 const visualLabelStatus = document.querySelector("#visual-label-status");
 const exportMenu = document.querySelector("#export-menu");
 const exportButtons = [...document.querySelectorAll("[data-export-format]")];
+const projectImportInput = document.querySelector("#education-project-input");
+const exportProjectButton = document.querySelector("#export-education-project");
+const importProjectButton = document.querySelector("#import-education-project");
 const exportBackground = document.querySelector("#export-background");
 const exportGrid = document.querySelector("#export-grid");
 const pdfExportDialog = document.querySelector("#pdf-export-dialog");
@@ -174,7 +183,11 @@ const circuitLab = createCircuitLab(
           change.component.id,
           change.component.type === "button"
             ? change.component.properties.pressed
-            : change.component.properties.value,
+            : change.component.type === "irSensor"
+              ? change.component.properties.detected
+            : change.component.type === "servo"
+              ? change.component.properties.angle
+              : change.component.properties.value,
         );
         return;
       }
@@ -546,6 +559,8 @@ const editorControls = initializeEditorControls({
   elements: {
     paste: document.querySelector("#paste-code"),
     loadExample: document.querySelector("#load-example"),
+    exampleSelect: document.querySelector("#example-select"),
+    exampleGuidance: document.querySelector("#example-guidance"),
     clear: document.querySelector("#clear-code"),
     fileInput: document.querySelector("#file-input"),
   },
@@ -566,6 +581,43 @@ initializeToolbar(
     generateDiagram,
   },
 );
+
+exportProjectButton.addEventListener("click", () => {
+  try {
+    const project = createProjectDocument({
+      sketch: editor.getValue(),
+      circuit: circuitModel.getState(),
+      visualLabels: visualLabelStore.getProjectLabels(),
+      appVersion: document.querySelector(".version-label")?.dataset.appVersion ?? "",
+    });
+    downloadBlob(
+      new Blob([serializeProjectDocument(project)], { type: "application/json;charset=utf-8" }),
+      sanitizeFilename(project.metadata.name, "json"),
+    );
+    status.setStatus("Proyecto educativo exportado como archivo JSON.", "success");
+  } catch (error) {
+    status.setStatus(`No se pudo exportar el proyecto: ${error.message}`, "error");
+  }
+});
+
+importProjectButton.addEventListener("click", () => projectImportInput.click());
+projectImportInput.addEventListener("change", async () => {
+  const [file] = projectImportInput.files ?? [];
+  if (!file) return;
+  try {
+    if (file.size > 2_000_000) throw new TypeError("El archivo del proyecto supera el tamaño máximo de 2 MB.");
+    const project = parseProjectJson(await file.text());
+    invalidateSimulation("Se ha importado otro proyecto.");
+    selectionModel.clear("project-import");
+    restoreProjectDocument(project, { editor, circuitModel, visualLabelStore });
+    generateDiagram();
+    status.setStatus(`Proyecto «${project.metadata.name}» importado correctamente.`, "success");
+  } catch (error) {
+    status.setStatus(`No se pudo importar el proyecto: ${error.message}`, "error");
+  } finally {
+    projectImportInput.value = "";
+  }
+});
 
 exportMenu.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-export-format]");
@@ -649,11 +701,15 @@ pdfExportForm.addEventListener("submit", async (event) => {
     sections: {
       diagram: document.querySelector('[name="section-diagram"]').checked,
       code: document.querySelector('[name="section-code"]').checked,
+      analysis: document.querySelector('[name="section-analysis"]').checked,
       circuit: document.querySelector('[name="section-circuit"]').checked,
       components: document.querySelector('[name="section-components"]').checked,
       connections: document.querySelector('[name="section-connections"]').checked,
     },
     sourceCode: editor.getValue(),
+    analysis: latestAnalysis && analyzedSource === editor.getValue()
+      ? latestAnalysis
+      : analyzeSource(editor.getValue()),
     circuitSvg: circuitLab.getSvgForExport(),
     components: circuitModel.getComponents(),
     wires: circuitModel.getWires(),

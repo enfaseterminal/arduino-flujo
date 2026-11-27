@@ -1,4 +1,5 @@
 const DISPLAY_TOKEN_FIELDS = ["kind", "text", "line", "column", "start", "end"];
+import { compatibilityMatrix } from "../analyzer/compatibility.js";
 
 function createDetails(title, content, open = false) {
   const details = document.createElement("details");
@@ -120,7 +121,28 @@ export function renderAnalysisReport(container, result) {
 
   const content = document.createElement("div");
   content.className = "diagnostic-sections";
+  const compatibility = document.createElement("div");
+  compatibility.className = "compatibility-guide";
+  compatibility.append(document.createTextNode("El analizador reconoce la sintaxis; el diagrama representa llamadas sin ejecutar bibliotecas. La simulación es educativa: los valores desconocidos indican operaciones no implementadas o que necesitan entrada."));
+  const table = document.createElement("table");
+  table.className = "compatibility-table";
+  const head = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+  for (const label of ["Función sugerida/detectada", "Análisis", "Diagrama", "Simulador"]) {
+    const th = document.createElement("th"); th.scope = "col"; th.textContent = label; headerRow.append(th);
+  }
+  head.append(headerRow);
+  const body = document.createElement("tbody");
+  for (const entry of compatibilityMatrix) {
+    const row = document.createElement("tr");
+    for (const value of [entry.name, entry.recognized, entry.diagram, entry.simulation]) {
+      const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
+    }
+    body.append(row);
+  }
+  table.append(head, body);
   content.append(
+    createDetails("Compatibilidad: analizador, diagrama y simulador", compatibility, false),
     createDetails("Tokens reconocidos", createPreformatted(tokenRows)),
     createDetails("Estructura del programa", createPreformatted({
       inclusiones: result.summary.includes,
@@ -139,6 +161,7 @@ export function renderAnalysisReport(container, result) {
     createDetails("Errores y advertencias", diagnostics, result.diagnostics.length > 0),
     createDetails("AST (JSON)", createPreformatted(serializeAst(result.ast))),
   );
+  content.querySelector("details").querySelector(".diagnostic-section-content").append(table);
 
   container.append(heading, content);
 }

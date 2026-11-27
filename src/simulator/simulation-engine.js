@@ -15,6 +15,11 @@ const PIN_OUTPUT_CALLS = new Set(["digitalWrite", "analogWrite"]);
 const SERIAL_CALLS = new Set(["Serial.print", "Serial.println"]);
 const SERIAL_BEGIN_CALL = "Serial.begin";
 const PIN_MODE_CALLS = new Set(["pinMode"]);
+const SERVO_METHOD_CALL = /^([\w$]+)\.(attach|write)$/;
+
+function isServoMethodCall(name) {
+  return SERVO_METHOD_CALL.test(name);
+}
 
 function nodeData(node, key) {
   return node?.[key] ?? node?.data?.[key] ?? null;
@@ -62,6 +67,7 @@ export class SimulationEngine {
     this.onStateChange = onStateChange;
     this.state = createSimulationState();
     this.state.circuitInputs = this.circuit?.getInitialInputs() ?? {};
+    this.state.servoAngles = this.circuit?.getInitialServoAngles?.() ?? {};
     this.history = [];
     this.maxSteps = 500;
     this.functions = new Map(
@@ -130,6 +136,7 @@ export class SimulationEngine {
     this.currentFunction = functionNode;
     this.state = createSimulationState();
     this.state.circuitInputs = this.circuit?.getInitialInputs() ?? {};
+    this.state.servoAngles = this.circuit?.getInitialServoAngles?.() ?? {};
     this.state.status = "paused";
     this.state.maxSteps = this.maxSteps;
     this.state.message = `Simulación iniciada en ${functionName}().`;
@@ -197,7 +204,12 @@ export class SimulationEngine {
     if (!this.circuit || !Object.hasOwn(this.circuit.getInitialInputs(), componentId)) {
       throw new Error("No se encontró la entrada virtual del componente.");
     }
+    const servo = this.circuit.getComponents().find((component) => component.id === componentId && component.type === "servo");
+    if (servo && (!Number.isInteger(value) || value < 0 || value > 180)) {
+      throw new RangeError("El ángulo del servo debe ser un entero entre 0 y 180 grados.");
+    }
     this.state.circuitInputs[componentId] = value;
+    if (servo) this.state.servoAngles[componentId] = value;
     this.notify();
     if (this.state.status !== "waiting-input" || !this.state.waitingInput) return this.getState();
     const { callName, pin } = this.state.waitingInput;
@@ -383,6 +395,30 @@ export class SimulationEngine {
   }
 
   simulateArduinoCall(name, args, node, argumentResults = []) {
+    const servoMethod = SERVO_METHOD_CALL.exec(name);
+    if (servoMethod) {
+      const [, objectName, method] = servoMethod;
+      if (method === "attach") {
+        const componentId = this.circuit?.getServoForPin?.(args[0]);
+        if (!componentId) {
+          this.addEvent("system", `[SERVO] No se encontró un servo correctamente conectado al pin ${String(args[0] ?? "?")}.`, node);
+          return unknownValue(null, "No hay un servo conectado a ese pin.");
+        }
+        this.state.servoAttachments[objectName] = componentId;
+        this.addEvent("actuator", `[SERVO ${objectName}] Asociado al pin ${String(args[0])}.`, node);
+        return unknownValue(null, "La asociación del servo se registra en la simulación.");
+      }
+      const componentId = this.state.servoAttachments[objectName];
+      const angle = args[0];
+      if (!componentId || !Number.isInteger(angle) || angle < 0 || angle > 180) {
+        this.addEvent("system", `[SERVO ${objectName}] Ángulo desconocido o fuera de rango (0–180°).`, node);
+        return unknownValue(null, "Servo.write() requiere un servo asociado y un ángulo entero de 0 a 180.");
+      }
+      this.state.servoAngles[componentId] = angle;
+      this.state.circuitInputs[componentId] = angle;
+      this.addEvent("actuator", `[SERVO ${objectName}] Ángulo actualizado a ${angle}°.`, node);
+      return unknownValue(null, "El ángulo se refleja en el actuador virtual.");
+    }
     if (SENSOR_CALLS.has(name)) {
       let pending = this.state.pendingInput;
       if (!pending || pending.callName !== name) {
@@ -415,11 +451,14 @@ export class SimulationEngine {
     if (PIN_OUTPUT_CALLS.has(name)) {
       if (name === "analogWrite") {
         const pin = argumentResults[0]?.known === false ? "desconocido" : String(args[0] ?? "?");
-        const value = argumentResults[1]?.known === false
-          ? `desconocido: ${argumentResults[1].reason}`
-          : String(args[1] ?? "?");
-        this.addEvent("system", `analogWrite: el programa solicita el valor ${value} en el pin ${pin}.`, node);
-        return unknownValue(null, "La escritura se registra como evento; no controla hardware.");
+        const value = argumentResults[1]?.known === false ? null : Number(args[1]);
+        const state = this.getPinState(pin);
+        state.lastOperation = Number.isInteger(value) ? `PWM ${value}` : "PWM desconocido";
+        state.value = Number.isInteger(value) ? Math.max(0, Math.min(255, value)) : null;
+        this.addEvent("pin", Number.isInteger(value)
+          ? `[PIN ${pin}] PWM ${state.value}/255`
+          : `[PIN ${pin}] PWM desconocido`, node);
+        return unknownValue(null, "La salida PWM se registra en la simulación.");
       }
       const pin = argumentResults[0]?.known === false ? null : String(args[0] ?? "?");
       const output = argumentResults[1]?.known === false
@@ -724,7 +763,7 @@ export class SimulationEngine {
         ...PIN_MODE_CALLS,
         ...SERIAL_CALLS,
         SERIAL_BEGIN_CALL,
-      ].includes(callName);
+      ].includes(callName) || isServoMethodCall(callName);
       const result = args.some((argument) => !argument.known) && !reportsUnknownValues
         ? unknownValue(null, detail)
         : this.simulateArduinoCall(callName, evaluatedArgs, expression, args);
@@ -741,6 +780,7 @@ export class SimulationEngine {
         ...PIN_MODE_CALLS,
         ...SERIAL_CALLS,
         SERIAL_BEGIN_CALL,
+        ...(isServoMethodCall(callName) ? [callName] : []),
         "delay",
       ].includes(callName)) {
         this.addEvent("system", `No simulado (línea ${node.startLine}): ${result.reason}`, node);

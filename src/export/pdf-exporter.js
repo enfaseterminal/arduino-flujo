@@ -70,10 +70,10 @@ function pageSizeForSvg(svg) {
 }
 
 function componentReferenceMap(components) {
-  const prefixes = { led: "D", resistor: "R", button: "SW", potentiometer: "RV" };
-  const counters = { led: 0, resistor: 0, button: 0, potentiometer: 0 };
+  const prefixes = { led: "D", rgbLed: "DL", resistor: "R", button: "SW", potentiometer: "RV", irSensor: "IR" };
+  const counters = {};
   return new Map(components.map((component) => {
-    counters[component.type] += 1;
+    counters[component.type] = (counters[component.type] ?? 0) + 1;
     const reference = `${prefixes[component.type] ?? "X"}${counters[component.type]}`;
     return [component.id, { component, reference }];
   }));
@@ -84,6 +84,10 @@ function describeComponent(component) {
   switch (component.type) {
     case "led":
       return { label: "LED", value: properties.color ?? "No especificado" };
+    case "rgbLed":
+      return { label: "LED RGB", value: "Común a GND" };
+    case "irSensor":
+      return { label: "Sensor infrarrojo digital", value: properties.detected ? "Detecta" : "Sin detección" };
     case "resistor":
       return {
         label: "Resistencia",
@@ -160,6 +164,7 @@ export async function exportPdf(
   const reportRows = createPdfReportRows(components, wires);
   const includeDiagram = sections.diagram !== false;
   const includeCode = sections.code === true;
+  const includeAnalysis = sections.analysis === true && options.analysis;
   const includeCircuit = sections.circuit === true && options.circuitSvg;
   const includeComponents = sections.components === true;
   const includeConnections = sections.connections === true;
@@ -287,6 +292,41 @@ export async function exportPdf(
 
   if (diagramDocument) {
     await drawSvgSection("Diagrama de flujo", diagramDocument, `${functionName} · etiquetas visuales y comentarios incluidos`);
+  }
+  if (includeAnalysis) {
+    addPage("Resumen del análisis");
+    drawPageHeading("Resumen del análisis", "Diagnóstico del código fuente incluido en esta ficha");
+    const analysis = options.analysis;
+    const counts = analysis.summary?.counts ?? {};
+    const errors = (analysis.diagnostics ?? []).filter(({ severity }) => severity === "error");
+    const warnings = (analysis.diagnostics ?? []).filter(({ severity }) => severity === "warning");
+    const diagnosticSummary = (items, emptyLabel) => items.length
+      ? `${items.length} · ${items.slice(0, 2).map(({ message }) => String(message).slice(0, 160)).join("; ")}${items.length > 2 ? `; y ${items.length - 2} más` : ""}`
+      : `0 · ${emptyLabel}`;
+    const calls = [...new Set((analysis.summary?.functionCalls ?? [])
+      .filter(({ isArduinoFunction }) => isArduinoFunction)
+      .map(({ name }) => name))];
+    const rows = [
+      ["Funciones detectadas", String(counts.functions ?? 0)],
+      ["Estructuras de control", String(counts.controlStructures ?? 0)],
+      ["Errores", diagnosticSummary(errors, "ninguno")],
+      ["Advertencias", diagnosticSummary(warnings, "ninguna")],
+      ["Llamadas Arduino reconocidas", calls.length ? calls.join(", ") : "Ninguna"],
+      ["Alcance", "Análisis y simulación con fines educativos. No se ejecuta C++ arbitrario ni se controla hardware físico."],
+    ];
+    let y = 116;
+    for (const [label, value] of rows) {
+      setPdfFont(pdf, "bold");
+      pdf.setFontSize(9);
+      pdf.setTextColor(71, 85, 105);
+      pdf.text(label, TECHNICAL_PAGE.margin, y);
+      setPdfFont(pdf, "normal");
+      pdf.setFontSize(9);
+      pdf.setTextColor(39, 50, 68);
+      const lines = splitReportText(value, 86);
+      pdf.text(lines, TECHNICAL_PAGE.margin + 150, y);
+      y += Math.max(24, lines.length * 12 + 10);
+    }
   }
   if (includeCode) {
     const codeLines = splitCodeLines(options.sourceCode ?? "", 104);

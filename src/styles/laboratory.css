@@ -291,6 +291,55 @@
   stroke-width: 3;
 }
 
+.circuit-photoresistor-body {
+  fill: #dce5ef;
+  stroke: #56677e;
+  stroke-width: 2;
+}
+
+.circuit-rgb-led { stroke: #536176; stroke-width: 3; }
+.circuit-rgb-cathode { stroke: #151a22; stroke-width: 2; }
+.circuit-ir-body { fill: #dce5ef; stroke: #56677e; stroke-width: 2; }
+.circuit-ir-eye { fill: #c34c45; stroke: #692d2b; stroke-width: 2; }
+.circuit-component-irSensor[data-state="detected"] .circuit-ir-eye { fill: #ff6b58; filter: drop-shadow(0 0 4px #ff6b58); }
+
+.circuit-photoresistor-cell {
+  fill: #e8c45b;
+  stroke: #8d6a1e;
+  stroke-width: 2;
+}
+
+.circuit-photoresistor-mark {
+  fill: none;
+  stroke: #56677e;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.circuit-servo-body {
+  fill: #dce5ef;
+  stroke: #56677e;
+  stroke-width: 2;
+}
+
+.circuit-servo-horn {
+  stroke: var(--accent);
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+.circuit-servo-pivot {
+  fill: var(--accent);
+  stroke: var(--surface);
+  stroke-width: 1.5;
+}
+
+.circuit-servo-angle {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .circuit-connection-editor {
   display: grid;
   gap: 8px;
@@ -483,7 +532,8 @@
   justify-self: start;
 }
 
-.circuit-pot-value {
+.circuit-pot-value,
+.circuit-analog-value {
   color: var(--text-primary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -538,3 +588,18 @@
     width: 100%;
   }
 }
+.compatibility-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  margin-top: 0.75rem;
+}
+.compatibility-table th,
+.compatibility-table td {
+  padding: 0.55rem;
+  border: 1px solid var(--border, #d8dee9);
+  text-align: left;
+  vertical-align: top;
+}
+.compatibility-table th { background: var(--surface-muted, #f4f6fa); }
+.compatibility-guide { margin-bottom: 0.5rem; line-height: 1.5; }

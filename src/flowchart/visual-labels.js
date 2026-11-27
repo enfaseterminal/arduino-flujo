@@ -83,6 +83,26 @@ export function createVisualLabelStore(storage, { onError = () => {} } = {}) {
       storedSourceMatches = record?.source === nextSource;
       labels = storedSourceMatches ? Object.assign(Object.create(null), record.labels) : Object.create(null);
     },
+    getProjectLabels() {
+      return structuredClone(Object.fromEntries(Object.entries(labels)));
+    },
+    replaceProjectLabels(nextSource, nextLabels) {
+      if (typeof nextSource !== "string") throw new TypeError("El código fuente debe ser texto.");
+      if (!nextLabels || typeof nextLabels !== "object" || Array.isArray(nextLabels) ||
+          Object.entries(nextLabels).some(([id, label]) =>
+            !id || id.length > 200 || typeof label !== "string" || !label.trim() ||
+            label.trim().length > VISUAL_LABEL_MAX_LENGTH
+          )) throw new TypeError("Las etiquetas visuales del proyecto no cumplen el esquema compatible.");
+      const next = Object.fromEntries(Object.entries(nextLabels).map(([id, label]) => [id, label.trim()]));
+      if (Object.keys(next).length) {
+        storage.setItem(VISUAL_LABELS_STORAGE_KEY, JSON.stringify({ version: 1, source: nextSource, labels: next }));
+      } else {
+        storage.removeItem(VISUAL_LABELS_STORAGE_KEY);
+      }
+      source = nextSource;
+      labels = Object.assign(Object.create(null), next);
+      storedSourceMatches = Object.keys(next).length > 0;
+    },
     getLabel(node) {
       return labels[getId(node)] ?? node.label;
     },

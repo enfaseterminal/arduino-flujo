@@ -8,9 +8,13 @@ import { resistorBands, resistorValues } from "./circuit-model.js";
 const SVG_NS = "http://www.w3.org/2000/svg";
 const COMPONENT_LABELS = {
   led: "LED",
+  rgbLed: "LED RGB",
   resistor: "Resistencia",
   button: "Pulsador",
   potentiometer: "Potenciómetro",
+  photoresistor: "Sensor de luz",
+  servo: "Servomotor",
+  irSensor: "Sensor infrarrojo digital",
 };
 const COLOR_VALUES = {
   rojo: "#e04438",
@@ -44,18 +48,26 @@ function componentDescription(component) {
   const properties = component.properties ?? {};
   switch (component.type) {
     case "led": return `LED ${properties.color}`;
+    case "rgbLed": return "LED RGB";
     case "resistor": return `Resistencia ${properties.ohms} Ω`;
     case "button": return `Pulsador ${properties.pressed ? "presionado" : "liberado"}`;
     case "potentiometer": return `Potenciómetro ${properties.value}/1023`;
+    case "photoresistor": return `Sensor de luz ${properties.value}/1023`;
+    case "servo": return `Servomotor ${properties.angle}°`;
+    case "irSensor": return `Sensor infrarrojo ${properties.detected ? "detecta" : "libre"}`;
     default: return `Componente no compatible (${component.type})`;
   }
 }
 
 const COMPONENT_TERMINAL_OFFSETS = {
   led: { left: [-19, 0], right: [19, 0] },
+  rgbLed: { left: [-30, 0], top: [0, -30], right: [30, 0], bottom: [0, 30] },
   resistor: { left: [-34, 0], right: [34, 0] },
   button: { left: [-32, 0], right: [32, 0] },
   potentiometer: { left: [-38, 0], top: [0, -42], right: [38, 0] },
+  photoresistor: { top: [0, -34], left: [-38, 0], bottom: [0, 34] },
+  servo: { top: [0, -34], left: [-38, 0], bottom: [0, 34] },
+  irSensor: { top: [0, -34], left: [-38, 0], bottom: [0, 34] },
 };
 
 function terminalPosition(component, terminalId, position) {
@@ -69,7 +81,7 @@ function terminalPosition(component, terminalId, position) {
 }
 
 function arduinoTerminalPosition(terminal) {
-  if (terminal.kind === "digital") return { x: 254, y: 82 + (terminal.number - 2) * 18 };
+  if (terminal.kind === "digital") return { x: 254, y: 46 + terminal.number * 18 };
   if (terminal.kind === "analog") return { x: 254, y: 315 + terminal.number * 18 };
   return { x: 254, y: terminal.id === "5V" ? 435 : 453 };
 }
@@ -239,7 +251,10 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
         "data-terminal": `arduino:${terminal.id}`,
         tabindex: 0,
         role: "button",
-        "aria-label": `Terminal Arduino ${terminal.id}`,
+        "aria-label": terminal.serial
+          ? `Terminal Arduino ${terminal.id}, serie ${terminal.serial}; usarlo puede interferir con la comunicación serie.`
+          : `Terminal Arduino ${terminal.id}`,
+        title: terminal.serial ? `${terminal.serial}: serie hardware en Arduino Uno` : terminal.id,
         "aria-pressed": String(fromSelect.value === `arduino:${terminal.id}`),
         class: `circuit-terminal${fromSelect.value === `arduino:${terminal.id}` ? " is-origin-selected" : ""}`,
       }));
@@ -248,7 +263,7 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
         y: y + 3,
         "text-anchor": "end",
         class: "circuit-pin-label",
-      }, terminal.id));
+      }, terminal.serial ? `${terminal.id} · ${terminal.serial}` : terminal.id));
     }
 
     const wireEntries = wirePathEntries(wires, components, positions, model.getEndpoints());
@@ -303,6 +318,11 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
         if (ledState.state === "on") {
           group.append(svgElement("path", { d: `M ${x + 12} ${y - 18} l 10 -10 m -6 0 h 6 v 6 M ${x + 17} ${y - 7} l 10 -10 m -6 0 h 6 v 6`, class: "circuit-led-rays" }));
         }
+      } else if (component.type === "rgbLed") {
+        const rgb = model.getRgbLedStates()[component.id] ?? { red: 0, green: 0, blue: 0 };
+        group.dataset.state = rgb.active ? "on" : "off";
+        group.append(svgElement("circle", { cx: x, cy: y, r: 17, fill: `rgb(${rgb.red}, ${rgb.green}, ${rgb.blue})`, class: "circuit-rgb-led" }));
+        group.append(svgElement("circle", { cx: x, cy: y, r: 6, fill: "#222", class: "circuit-rgb-cathode" }));
       } else if (component.type === "resistor") {
         group.append(svgElement("line", { x1: x - 34, y1: y, x2: x - 24, y2: y, class: "circuit-lead" }));
         group.append(svgElement("rect", { x: x - 24, y: y - 9, width: 48, height: 18, rx: 4, class: "circuit-resistor-body" }));
@@ -329,6 +349,27 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
         group.append(svgElement("line", { x1: x - 26, y1: y - 25, x2: x + 26, y2: y - 25, class: "circuit-pot-track" }));
         group.append(svgElement("line", { x1: knobX, y1: y - 30, x2: x, y2: y - 42, class: "circuit-pot-wiper-line" }));
         group.append(svgElement("circle", { cx: knobX, cy: y - 25, r: 6, class: "circuit-pot-knob", "data-pot-knob": "" }));
+      } else if (component.type === "photoresistor") {
+        group.append(svgElement("rect", { x: x - 22, y: y - 18, width: 44, height: 36, rx: 8, class: "circuit-photoresistor-body" }));
+        group.append(svgElement("circle", { cx: x, cy: y, r: 9, class: "circuit-photoresistor-cell" }));
+        group.append(svgElement("path", { d: `M ${x - 5} ${y + 5} L ${x + 5} ${y - 5} M ${x - 1} ${y + 7} L ${x + 7} ${y - 1}`, class: "circuit-photoresistor-mark" }));
+        group.dataset.value = String(component.properties.value);
+      } else if (component.type === "servo") {
+        const angle = Number(component.properties.angle);
+        group.dataset.angle = String(angle);
+        group.append(svgElement("rect", { x: x - 22, y: y - 18, width: 44, height: 36, rx: 7, class: "circuit-servo-body" }));
+        group.append(svgElement("line", {
+          x1: x, y1: y, x2: x, y2: y - 30,
+          transform: `rotate(${angle - 90} ${x} ${y})`,
+          class: "circuit-servo-horn",
+          "data-servo-horn": "",
+        }));
+        group.append(svgElement("circle", { cx: x, cy: y, r: 5, class: "circuit-servo-pivot" }));
+      } else if (component.type === "irSensor") {
+        group.dataset.state = component.properties.detected ? "detected" : "clear";
+        group.append(svgElement("rect", { x: x - 22, y: y - 17, width: 44, height: 34, rx: 7, class: "circuit-ir-body" }));
+        group.append(svgElement("circle", { cx: x - 7, cy: y, r: 6, class: "circuit-ir-eye" }));
+        group.append(svgElement("circle", { cx: x + 8, cy: y, r: 6, class: "circuit-ir-eye" }));
       } else {
         group.append(svgElement("rect", {
           x: x - 30,
@@ -481,7 +522,7 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
       pressed.dataset.property = "pressed";
       pressed.setAttribute("aria-pressed", String(component.properties.pressed));
       properties.append(pressed, htmlElement("p", "circuit-help", "La entrada solo se determina con una conexión válida al pin y una referencia GND o 5V."));
-    } else if (component.type === "potentiometer") {
+    } else if (component.type === "potentiometer" || component.type === "photoresistor") {
       const label = htmlElement("label", "circuit-field", "Valor analógico (0–1023)");
       const range = document.createElement("input");
       range.type = "range";
@@ -492,8 +533,29 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
       range.value = String(component.properties.value);
       range.dataset.property = "value";
       label.append(range);
-      const output = htmlElement("output", "circuit-pot-value", `${component.properties.value}/1023`);
-      properties.append(label, output, htmlElement("p", "circuit-help", "El valor alimenta analogRead() cuando el wiper y los extremos están conectados correctamente."));
+      const output = htmlElement("output", "circuit-pot-value circuit-analog-value", `${component.properties.value}/1023`);
+      properties.append(label, output, htmlElement("p", "circuit-help", component.type === "potentiometer"
+        ? "El valor alimenta analogRead() cuando el wiper y los extremos están conectados correctamente."
+        : "El valor representa la lectura de luz simulada; requiere VCC, GND y AO conectados."));
+    } else if (component.type === "servo") {
+      const label = htmlElement("label", "circuit-field", "Ángulo del servo (0–180°)");
+      const range = document.createElement("input");
+      range.type = "range";
+      range.name = "angle";
+      range.min = "0";
+      range.max = "180";
+      range.step = "1";
+      range.value = String(component.properties.angle);
+      range.dataset.property = "angle";
+      label.append(range);
+      properties.append(label, htmlElement("output", "circuit-servo-angle", `${component.properties.angle}°`),
+        htmlElement("p", "circuit-help", "motor.attach(pin) asocia SIG a un pin digital y motor.write(grados) actualiza el brazo en la simulación."));
+    } else if (component.type === "irSensor") {
+      const detected = htmlElement("button", "tool-button", component.properties.detected ? "Simular sin detección" : "Simular detección");
+      detected.type = "button";
+      detected.dataset.property = "detected";
+      detected.setAttribute("aria-pressed", String(component.properties.detected));
+      properties.append(detected, htmlElement("p", "circuit-help", "digitalRead(pin) devuelve HIGH al detectar y LOW cuando no hay detección; conecta VCC, GND y OUT."));
     } else {
       properties.append(htmlElement("p", "circuit-help", "Este componente se conserva, pero esta versión no puede editarlo ni simularlo."));
     }
@@ -530,6 +592,8 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
         ...selected.properties,
         ...(selected.type === "button" ? { pressed: Boolean(currentSimulationInputs[selected.id]) } : {}),
         ...(selected.type === "potentiometer" ? { value: Number(currentSimulationInputs[selected.id]) } : {}),
+        ...(selected.type === "photoresistor" ? { value: Number(currentSimulationInputs[selected.id]) } : {}),
+        ...(selected.type === "servo" ? { angle: Number(currentSimulationInputs[selected.id]) } : {}),
       };
     }
     appendComponentProperties(selected);
@@ -834,14 +898,15 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
       if (result) announceChange(result);
       return;
     }
-    const toggle = event.target.closest('[data-property="pressed"]');
+    const toggle = event.target.closest('[data-property="pressed"], [data-property="detected"]');
     if (toggle && selectedComponentId) {
       const component = model.getComponents().find((item) => item.id === selectedComponentId);
+      const property = toggle.dataset.property;
       const currentPressed = currentSimulationInputs &&
         Object.hasOwn(currentSimulationInputs, selectedComponentId)
         ? Boolean(currentSimulationInputs[selectedComponentId])
-        : component.properties.pressed;
-      const result = model.updateProperty(selectedComponentId, "pressed", !currentPressed);
+        : property === "detected" ? component.properties.detected : component.properties.pressed;
+      const result = model.updateProperty(selectedComponentId, property, !currentPressed);
       announceChange(result);
       return;
     }
@@ -919,7 +984,7 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
     const property = event.target.dataset.property;
     if (!property || !selectedComponentId) return;
     try {
-      const value = property === "value" ? Number(event.target.value) : event.target.value;
+      const value = ["value", "angle"].includes(property) ? Number(event.target.value) : event.target.value;
       announceChange(model.updateProperty(selectedComponentId, property, value));
     } catch (error) {
       status.textContent = error.message;
@@ -927,9 +992,14 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
   });
 
   root.addEventListener("input", (event) => {
-    if (event.target.dataset.property !== "value" || !selectedComponentId) return;
-    const output = properties.querySelector(".circuit-pot-value");
-    if (output) output.value = `${event.target.value}/1023`;
+    if (!selectedComponentId) return;
+    if (event.target.dataset.property === "value") {
+      const output = properties.querySelector(".circuit-analog-value");
+      if (output) output.value = `${event.target.value}/1023`;
+    } else if (event.target.dataset.property === "angle") {
+      const output = properties.querySelector(".circuit-servo-angle");
+      if (output) output.value = `${event.target.value}°`;
+    }
   });
 
   wireForm.addEventListener("submit", (event) => {
@@ -993,6 +1063,7 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
     updateSimulation(state) {
       currentSimulationInputs = { ...state.circuitInputs };
       const ledStates = model.getLedStates(state.pins, state.circuitInputs);
+      const rgbStates = model.getRgbLedStates(state.pins);
       for (const [componentId, ledState] of Object.entries(ledStates)) {
         const group = [...canvas.querySelectorAll("[data-component-id]")]
           .find((element) => element.dataset.componentId === componentId);
@@ -1004,10 +1075,33 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
           );
         }
       }
+      for (const [componentId, rgb] of Object.entries(rgbStates)) {
+        const group = [...canvas.querySelectorAll("[data-component-id]")].find((element) => element.dataset.componentId === componentId);
+        const bulb = group?.querySelector(".circuit-rgb-led");
+        if (bulb) bulb.setAttribute("fill", `rgb(${rgb.red}, ${rgb.green}, ${rgb.blue})`);
+        if (group) group.dataset.state = rgb.active ? "on" : "off";
+      }
       for (const component of model.getComponents()) {
-        if (component.type !== "button" && component.type !== "potentiometer") continue;
+        if (!(["button", "potentiometer", "photoresistor", "servo", "irSensor"].includes(component.type))) continue;
         const group = [...canvas.querySelectorAll("[data-component-id]")]
           .find((element) => element.dataset.componentId === component.id);
+        if (component.type === "servo") {
+          const angle = Number(state.servoAngles?.[component.id] ?? state.circuitInputs[component.id] ?? component.properties.angle);
+          if (group) {
+            group.dataset.angle = String(angle);
+            group.setAttribute("aria-label", `Servomotor ${angle}°. Seleccionar componente.`);
+            const position = model.getComponentPosition(component.id);
+            const horn = group.querySelector("[data-servo-horn]");
+            if (horn && position) horn.setAttribute("transform", `rotate(${angle - 90} ${position.x} ${position.y})`);
+          }
+          if (component.id === selectedComponentId) {
+            const range = properties.querySelector('[data-property="angle"]');
+            const output = properties.querySelector(".circuit-servo-angle");
+            if (range) range.value = String(angle);
+            if (output) output.value = `${angle}°`;
+          }
+          continue;
+        }
         const input = state.circuitInputs[component.id];
         if (group && component.type === "button" && typeof input === "boolean") {
           group.dataset.state = input ? "pressed" : "released";
@@ -1016,6 +1110,10 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
             `Pulsador ${input ? "presionado" : "liberado"}. Seleccionar componente.`,
           );
         }
+        if (group && component.type === "irSensor" && typeof input === "boolean") {
+          group.dataset.state = input ? "detected" : "clear";
+          group.setAttribute("aria-label", `Sensor infrarrojo ${input ? "detecta" : "sin detección"}. Seleccionar componente.`);
+        }
         if (component.id !== selectedComponentId) continue;
         if (component.type === "button" && typeof input === "boolean") {
           const toggle = properties.querySelector('[data-property="pressed"]');
@@ -1023,12 +1121,22 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
             toggle.setAttribute("aria-pressed", String(input));
             toggle.textContent = input ? "Liberar pulsador" : "Presionar pulsador";
           }
-        } else if (component.type === "potentiometer" && Number.isInteger(input)) {
+        } else if (component.type === "irSensor" && typeof input === "boolean") {
+          const toggle = properties.querySelector('[data-property="detected"]');
+          if (toggle) {
+            toggle.setAttribute("aria-pressed", String(input));
+            toggle.textContent = input ? "Simular sin detección" : "Simular detección";
+          }
+        } else if ((component.type === "potentiometer" || component.type === "photoresistor") && Number.isInteger(input)) {
           const range = properties.querySelector('[data-property="value"]');
-          const output = properties.querySelector(".circuit-pot-value");
+          const output = properties.querySelector(".circuit-analog-value");
           const knob = group?.querySelector("[data-pot-knob]");
           if (range) range.value = String(input);
           if (output) output.value = `${input}/1023`;
+          if (component.type === "photoresistor" && group) {
+            group.dataset.value = String(input);
+            group.setAttribute("aria-label", `Sensor de luz · lectura ${input}/1023. Seleccionar componente.`);
+          }
           const position = model.getComponentPosition(component.id);
           if (knob && position) knob.setAttribute("cx", String(position.x - 26 + (input / 1023) * 52));
         }

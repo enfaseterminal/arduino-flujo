@@ -18,6 +18,11 @@ const COMPONENTS = Object.freeze({
     (properties) => ["rojo", "verde", "amarillo", "azul"].includes(properties.color),
     [terminal("anode", "left"), terminal("cathode", "right")],
   ),
+  rgbLed: defineComponent(
+    {},
+    (properties) => Object.keys(properties).length === 0,
+    [terminal("red", "left"), terminal("green", "top"), terminal("blue", "right"), terminal("cathode", "bottom")],
+  ),
   resistor: defineComponent(
     { ohms: 220, tolerance: 5, bandCount: 4 },
     (properties) =>
@@ -41,6 +46,21 @@ const COMPONENTS = Object.freeze({
       terminal("end2", "right"),
     ],
   ),
+  photoresistor: defineComponent(
+    { value: 512 },
+    (properties) => Number.isInteger(properties.value) && properties.value >= 0 && properties.value <= 1023,
+    [terminal("vcc", "top"), terminal("signal", "left"), terminal("gnd", "bottom")],
+  ),
+  servo: defineComponent(
+    { angle: 90 },
+    (properties) => Number.isInteger(properties.angle) && properties.angle >= 0 && properties.angle <= 180,
+    [terminal("vcc", "top"), terminal("signal", "left"), terminal("gnd", "bottom")],
+  ),
+  irSensor: defineComponent(
+    { detected: false },
+    (properties) => typeof properties.detected === "boolean",
+    [terminal("vcc", "top"), terminal("signal", "left"), terminal("gnd", "bottom")],
+  ),
 });
 
 function componentDefinition(type) {
@@ -48,6 +68,8 @@ function componentDefinition(type) {
 }
 
 const ARDUINO_TERMINALS = Object.freeze([
+  Object.freeze({ id: "D0", kind: "digital", number: 0, serial: "RX" }),
+  Object.freeze({ id: "D1", kind: "digital", number: 1, serial: "TX" }),
   ...Array.from({ length: 12 }, (_unused, index) => Object.freeze({
     id: `D${index + 2}`,
     kind: "digital",
