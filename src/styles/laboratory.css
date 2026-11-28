@@ -48,6 +48,32 @@
   margin-bottom: 10px;
 }
 
+.circuit-board-profile-control {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) minmax(180px, 240px);
+  align-items: center;
+  gap: 8px 12px;
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.circuit-board-profile-notes {
+  grid-column: 1 / -1;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.circuit-board-profile-notes ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
 .circuit-section h3,
 .circuit-section-heading h3,
 .circuit-properties h3 {
@@ -80,7 +106,7 @@
   display: block;
   width: 100%;
   min-width: 720px;
-  max-height: 520px;
+  max-height: 560px;
 }
 
 .circuit-uno {
@@ -558,6 +584,9 @@
 }
 
 @media (max-width: 760px) {
+  .circuit-board-profile-control {
+    grid-template-columns: 1fr;
+  }
   .workspace[data-mobile-view="editor"] .editor-panel,
   .workspace[data-mobile-view="diagram"] .diagram-panel,
   .workspace[data-mobile-view="laboratory"] .laboratory-panel {

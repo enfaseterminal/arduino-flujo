@@ -1,4 +1,5 @@
 import {
+  getBoardProfiles,
   getArduinoTerminals,
   getComponentTerminals,
   isComponentType,
@@ -22,7 +23,6 @@ const COLOR_VALUES = {
   amarillo: "#e9c63f",
   azul: "#387fc1",
 };
-const ARDUINO_TERMINALS = getArduinoTerminals();
 
 function svgElement(name, attributes = {}, text = "") {
   const element = document.createElementNS(SVG_NS, name);
@@ -83,12 +83,12 @@ function terminalPosition(component, terminalId, position) {
 function arduinoTerminalPosition(terminal) {
   if (terminal.kind === "digital") return { x: 254, y: 46 + terminal.number * 18 };
   if (terminal.kind === "analog") return { x: 254, y: 315 + terminal.number * 18 };
-  return { x: 254, y: terminal.id === "5V" ? 435 : 453 };
+  return { x: 254, y: terminal.id === "5V" ? 471 : 489 };
 }
 
-function endpointPosition(endpoint, components, positions) {
+function endpointPosition(endpoint, components, positions, terminals) {
   if (endpoint.startsWith("arduino:")) {
-    const terminal = ARDUINO_TERMINALS.find(({ id }) => id === endpoint.slice("arduino:".length));
+    const terminal = terminals.find(({ id }) => id === endpoint.slice("arduino:".length));
     return terminal ? arduinoTerminalPosition(terminal) : null;
   }
   const separator = endpoint.lastIndexOf(":");
@@ -131,7 +131,7 @@ function wirePath(from, to, offset = 0) {
   return `M ${from.x} ${from.y} C ${controlX} ${from.y + offsetY}, ${controlX} ${to.y + offsetY}, ${to.x} ${to.y}`;
 }
 
-function wirePathEntries(wires, components, positions, endpoints) {
+function wirePathEntries(wires, components, positions, endpoints, terminals) {
   const endpointIds = new Set(endpoints.map(({ id }) => id));
   const groups = new Map();
   for (const wire of wires) {
@@ -149,8 +149,8 @@ function wirePathEntries(wires, components, positions, endpoints) {
     indexes.set(JSON.stringify(pair), index + 1);
     const centeredOffset = (index - (group.length - 1) / 2) * 14;
     const orientation = wire.from <= wire.to ? 1 : -1;
-    const from = endpointPosition(wire.from, components, positions) ?? { x: 280, y: 475 };
-    const to = endpointPosition(wire.to, components, positions) ?? { x: 790, y: 475 };
+    const from = endpointPosition(wire.from, components, positions, terminals) ?? { x: 280, y: 500 };
+    const to = endpointPosition(wire.to, components, positions, terminals) ?? { x: 790, y: 500 };
     const invalid = !endpointIds.has(wire.from) || !endpointIds.has(wire.to);
     return {
       wire,
@@ -193,6 +193,8 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
   const status = root.querySelector("#circuit-status");
   const fromSelect = root.querySelector("#circuit-wire-from");
   const toSelect = root.querySelector("#circuit-wire-to");
+  const boardSelect = root.querySelector("#circuit-board-profile");
+  const boardNotes = root.querySelector("#circuit-board-profile-notes");
   const wireForm = root.querySelector("#circuit-wire-form");
   const historyControls = htmlElement("div", "circuit-history-controls");
   const undoButton = htmlElement("button", "tool-button circuit-history-button", "Deshacer");
@@ -223,16 +225,19 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
 
   function renderCanvas() {
     const components = model.getComponents();
+    const board = model.getBoardProfile();
+    const terminals = getArduinoTerminals(board.id);
     const positions = model.getVisualState().positions;
     const wires = model.getWires();
     canvas.replaceChildren();
-    canvas.append(svgElement("title", { id: "circuit-canvas-title" }, "Arduino Uno y protoboard"));
-    canvas.append(svgElement("desc", {}, "Circuito educativo. Selecciona componentes o terminales para editarlos y conectarlos."));
-    canvas.append(svgElement("rect", { x: 18, y: 42, width: 246, height: 420, rx: 20, class: "circuit-uno" }));
-    canvas.append(svgElement("text", { x: 141, y: 70, "text-anchor": "middle", class: "circuit-uno-title" }, "Arduino Uno"));
+    canvas.dataset.boardProfile = board.id;
+    canvas.append(svgElement("title", { id: "circuit-canvas-title" }, `${board.name} y protoboard`));
+    canvas.append(svgElement("desc", {}, `Pinout funcional del perfil ${board.name}. Selecciona componentes o terminales para editarlos y conectarlos.`));
+    canvas.append(svgElement("rect", { x: 18, y: 42, width: 246, height: 450, rx: 20, class: "circuit-uno" }));
+    canvas.append(svgElement("text", { x: 141, y: 70, "text-anchor": "middle", class: "circuit-uno-title" }, board.name));
     canvas.append(svgElement("rect", { x: 52, y: 91, width: 138, height: 87, rx: 10, class: "circuit-chip" }));
     canvas.append(svgElement("text", { x: 121, y: 139, "text-anchor": "middle", class: "circuit-label" }, "ATmega328P"));
-    canvas.append(svgElement("rect", { x: 299, y: 42, width: 483, height: 420, rx: 12, class: "circuit-breadboard" }));
+    canvas.append(svgElement("rect", { x: 299, y: 42, width: 483, height: 450, rx: 12, class: "circuit-breadboard" }));
     canvas.append(svgElement("text", { x: 320, y: 66, class: "circuit-board-label" }, "Protoboard"));
     for (const x of [322, 342, 362, 382, 402, 422, 442, 462, 482, 502, 522, 542, 562, 582, 602, 622, 642, 662, 682, 702, 722, 742, 762]) {
       for (const y of [86, 104, 122, 140, 158, 176, 194, 212, 230, 248, 266, 284, 302, 320, 338, 356, 374, 392, 410, 428, 446]) {
@@ -240,7 +245,7 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
       }
     }
 
-    for (const terminal of ARDUINO_TERMINALS) {
+    for (const terminal of terminals) {
       const { x, y } = arduinoTerminalPosition(terminal);
       canvas.append(svgElement("line", { x1: 228, y1: y, x2: x, y2: y, class: "circuit-pin-line" }));
       canvas.append(svgElement("circle", {
@@ -252,9 +257,11 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
         tabindex: 0,
         role: "button",
         "aria-label": terminal.serial
-          ? `Terminal Arduino ${terminal.id}, serie ${terminal.serial}; usarlo puede interferir con la comunicación serie.`
-          : `Terminal Arduino ${terminal.id}`,
-        title: terminal.serial ? `${terminal.serial}: serie hardware en Arduino Uno` : terminal.id,
+          ? `Terminal ${board.name} ${terminal.id}, serie ${terminal.serial}; usarlo puede interferir con la comunicación serie.`
+          : terminal.analogOnly
+            ? `Terminal ${board.name} ${terminal.id}, solo entrada analógica`
+            : terminal.pwm ? `Terminal ${board.name} ${terminal.id}, compatible con PWM` : `Terminal ${board.name} ${terminal.id}`,
+        title: terminal.serial ? `${terminal.serial}: serie hardware` : terminal.analogOnly ? "Solo entrada analógica" : terminal.pwm ? "PWM" : terminal.id,
         "aria-pressed": String(fromSelect.value === `arduino:${terminal.id}`),
         class: `circuit-terminal${fromSelect.value === `arduino:${terminal.id}` ? " is-origin-selected" : ""}`,
       }));
@@ -266,7 +273,7 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
       }, terminal.serial ? `${terminal.id} · ${terminal.serial}` : terminal.id));
     }
 
-    const wireEntries = wirePathEntries(wires, components, positions, model.getEndpoints());
+    const wireEntries = wirePathEntries(wires, components, positions, model.getEndpoints(), terminals);
     for (const { wire, d, invalid, from, to } of wireEntries) {
       const invalidClass = invalid ? " is-invalid" : "";
       canvas.append(svgElement("path", {
@@ -584,6 +591,15 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
       selectedComponentId = null;
     }
     renderCanvas();
+    if (boardSelect) boardSelect.value = model.getBoardProfile().id;
+    if (boardNotes) {
+      const board = model.getBoardProfile();
+      boardNotes.replaceChildren();
+      boardNotes.append(htmlElement("strong", "", `${board.model} · ${board.voltage}`));
+      const notes = document.createElement("ul");
+      board.notes.forEach((note) => notes.append(htmlElement("li", "", note)));
+      boardNotes.append(notes);
+    }
     renderWireControls();
     renderComponentList();
     const selected = model.getComponents().find((item) => item.id === selectedComponentId);
@@ -614,7 +630,7 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
     const components = model.getComponents();
     const positions = model.getVisualState().positions;
     positions[componentId] = position;
-    for (const entry of wirePathEntries(model.getWires(), components, positions, model.getEndpoints())) {
+    for (const entry of wirePathEntries(model.getWires(), components, positions, model.getEndpoints(), getArduinoTerminals(model.getBoardProfile().id))) {
       for (const path of canvas.querySelectorAll(`[data-wire-id="${entry.wire.id}"]`)) {
         path.setAttribute("d", entry.d);
       }
@@ -970,6 +986,16 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
   });
 
   root.addEventListener("change", (event) => {
+    if (event.target === boardSelect) {
+      try {
+        announceChange(model.setBoardProfile(boardSelect.value));
+        status.textContent = `Perfil activo: ${model.getBoardProfile().name}.`;
+      } catch (error) {
+        boardSelect.value = model.getBoardProfile().id;
+        status.textContent = error.message;
+      }
+      return;
+    }
     if (event.target.matches("[data-wire-edit-side]")) {
       wireEditSide = event.target.value;
       wireEditEndpoint = "";
@@ -1008,6 +1034,11 @@ export function createCircuitLab(root, model, { onChange = () => {}, onLoadDemo 
     fromSelect.value = "";
     toSelect.value = "";
   });
+
+  if (boardSelect) {
+    boardSelect.replaceChildren();
+    for (const profile of getBoardProfiles()) addOption(boardSelect, profile.id, profile.name);
+  }
 
   render();
   return {

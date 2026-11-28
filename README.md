@@ -19,6 +19,8 @@ La aplicación se ejecuta en el navegador y no necesita backend. El código del 
 - Laboratorio visual con Arduino, LED, LED RGB, resistencias, pulsadores, potenciómetro, sensores de luz e infrarrojos y servomotor.
 - Tema claro/oscuro y almacenamiento local, sin cuenta ni servicio remoto.
 
+Consulta las [notas de publicación de v0.9.7](docs/notas-v0.9.7.md) para ver las novedades de catálogo, placas, diagnóstico, proyectos y accesibilidad.
+
 ## Requisitos
 
 - Node.js 20.19+ o 22.12+.
@@ -47,6 +49,8 @@ npm run preview
 4. Usa **Exportar** para obtener SVG, PNG o PDF.
 5. Abre **Simulador paso a paso** para avanzar, retroceder o ejecutar una sesión con valores de entrada simulados.
 6. Abre **Laboratorio** para montar circuitos virtuales y observar su interacción lógica con el simulador.
+
+Consulta la [guía de accesibilidad](docs/accesibilidad.md) para navegación con teclado, lector de pantalla, zoom y uso móvil.
 
 ## Arquitectura
 

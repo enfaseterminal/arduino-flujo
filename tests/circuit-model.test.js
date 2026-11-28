@@ -91,6 +91,23 @@ describe("circuit model", () => {
     expect(model.getWires().map(({ from }) => from)).toEqual(["arduino:D0", "arduino:D1"]);
   });
 
+  it("provides Uno and Nano capabilities and protects profile-specific connections", () => {
+    const model = createCircuitModel(createMemoryStorage());
+    expect(model.getBoardProfile()).toMatchObject({ id: "uno", analogPins: ["A0", "A1", "A2", "A3", "A4", "A5"] });
+    expect(model.getPinCapabilities("D3")).toContain("analogWrite");
+    expect(model.getPinCapabilities("D2")).not.toContain("analogWrite");
+    model.setBoardProfile("nano");
+    expect(model.getState().boardProfile).toBe("nano");
+    expect(model.getPinCapabilities("A7")).toEqual(["analogRead"]);
+    expect(model.getEndpoints().find(({ id }) => id === "arduino:A7").label).toContain("solo entrada analógica");
+    const led = model.addComponent("led").component;
+    model.setBoardProfile("uno");
+    model.addWire("arduino:A5", `${led.id}:anode`);
+    expect(() => model.setBoardProfile("nano")).not.toThrow();
+    model.addWire("arduino:A7", `${led.id}:cathode`);
+    expect(() => model.setBoardProfile("uno")).toThrow("no dispone de A7");
+  });
+
   it("allows component colors, resistor tolerance, and potentiometer values to be updated", () => {
     const model = createCircuitModel(createMemoryStorage());
     const resistor = model.addComponent("resistor").component;

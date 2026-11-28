@@ -711,6 +711,7 @@ pdfExportForm.addEventListener("submit", async (event) => {
       ? latestAnalysis
       : analyzeSource(editor.getValue()),
     circuitSvg: circuitLab.getSvgForExport(),
+    boardProfile: circuitModel.getBoardProfile(),
     components: circuitModel.getComponents(),
     wires: circuitModel.getWires(),
   };

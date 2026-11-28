@@ -37,6 +37,9 @@ function createRoot() {
     <section id="circuit-properties"></section>
     <div id="circuit-warnings"></div>
     <p id="circuit-status"></p>
+    <label for="circuit-board-profile">Perfil de placa</label>
+    <select id="circuit-board-profile"></select>
+    <div id="circuit-board-profile-notes"></div>
     <select id="circuit-wire-from"></select>
     <select id="circuit-wire-to"></select>
     <form id="circuit-wire-form"></form>
@@ -53,6 +56,26 @@ function createRoot() {
 }
 
 describe("circuit lab interface", () => {
+  it("changes board pinouts, exposes capability notes, and rejects an unavailable target profile", () => {
+    const root = createRoot();
+    const model = createCircuitModel(createMemoryStorage());
+    createCircuitLab(root, model);
+    const select = root.querySelector("#circuit-board-profile");
+    expect(select.value).toBe("uno");
+    select.value = "nano";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(root.querySelector("#circuit-canvas").dataset.boardProfile).toBe("nano");
+    expect(root.querySelector('[data-terminal="arduino:A7"]')).toBeTruthy();
+    expect(root.querySelector("#circuit-board-profile-notes").textContent).toContain("A6 y A7");
+
+    const component = model.addComponent("led").component;
+    model.addWire("arduino:A7", `${component.id}:anode`);
+    select.value = "uno";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(select.value).toBe("nano");
+    expect(root.querySelector("#circuit-status").textContent).toContain("no dispone de A7");
+  });
+
   it("renders a demonstrator, lets users select components, and edits component properties", () => {
     const root = createRoot();
     const model = createCircuitModel(createMemoryStorage());

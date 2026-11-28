@@ -80,6 +80,19 @@ describe("versioned educational project format", () => {
     expect(visualLabelStore.getProjectLabels()).toEqual({ "ast-node-5": "Encender el LED" });
   });
 
+  it("serializes and restores the selected Nano board profile", () => {
+    const project = createDocument();
+    project.circuit.boardProfile = "nano";
+    const parsed = parseProjectJson(serializeProjectDocument(project));
+    const circuitModel = createCircuitModel(createStorage());
+    restoreProjectDocument(parsed, { editor: { setValue() {} }, circuitModel, visualLabelStore: createVisualLabelStore(createStorage()) });
+    expect(circuitModel.getBoardProfile()).toMatchObject({ id: "nano", analogPins: expect.arrayContaining(["A6", "A7"]) });
+
+    const invalid = createDocument();
+    invalid.circuit.boardProfile = "mega";
+    expect(() => parseProjectJson(JSON.stringify(invalid))).toThrow("montaje virtual");
+  });
+
   it("rejects malformed JSON, incompatible versions and invalid circuit schemas", () => {
     expect(() => parseProjectJson("{" )).toThrow("JSON válido");
     const unsupported = createDocument();

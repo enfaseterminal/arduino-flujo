@@ -39,23 +39,23 @@
             <span class="theme-toggle-label">Tema oscuro</span>
           </button>
         </div>
-        <span class="version-label" data-app-version="0.9.6">FASE 9.6 · v0.9.6</span>
+        <span class="version-label" data-app-version="0.9.7">FASE 9.7 · v0.9.7</span>
       </header>
 
       <main class="workspace" data-mobile-view="editor">
         <nav class="mobile-tabs" aria-label="Vista de trabajo">
-          <button class="mobile-tab is-active" type="button" data-view="editor" aria-pressed="true">
+          <button class="mobile-tab is-active" type="button" data-view="editor" aria-pressed="true" aria-controls="editor-panel">
             Editor Arduino
           </button>
-          <button class="mobile-tab" type="button" data-view="diagram" aria-pressed="false">
+          <button class="mobile-tab" type="button" data-view="diagram" aria-pressed="false" aria-controls="diagram-panel">
             Diagrama
           </button>
-          <button class="mobile-tab" type="button" data-view="laboratory" aria-pressed="false">
+          <button class="mobile-tab" type="button" data-view="laboratory" aria-pressed="false" aria-controls="circuit-laboratory">
             Laboratorio
           </button>
         </nav>
 
-        <section class="work-panel editor-panel" aria-labelledby="editor-heading">
+        <section class="work-panel editor-panel" id="editor-panel" aria-labelledby="editor-heading">
           <div class="panel-heading">
             <div class="panel-title">
               <span class="section-icon editor-icon" aria-hidden="true">&lt;/&gt;</span>
@@ -101,7 +101,7 @@
           />
         </section>
 
-        <section class="work-panel diagram-panel" aria-labelledby="diagram-heading">
+        <section class="work-panel diagram-panel" id="diagram-panel" aria-labelledby="diagram-heading">
           <div class="panel-heading">
             <div class="panel-title">
               <span class="section-icon diagram-icon" aria-hidden="true">◇</span>
@@ -124,7 +124,7 @@
                 <span>Comentarios</span>
               </label>
             </div>
-            <span class="diagram-hint">Rueda / + / − para zoom · arrastra para desplazar · F ajustar · 0 centrar</span>
+            <span class="diagram-hint" id="diagram-keyboard-hint">Rueda / + / − para zoom · arrastra para desplazar · F ajustar · 0 centrar</span>
             <div class="diagram-controls">
               <button class="tool-button zoom-button" id="zoom-out" type="button" aria-label="Alejar" title="Alejar">−</button>
               <span class="zoom-level" id="zoom-level" aria-live="polite">100%</span>
@@ -147,6 +147,7 @@
               role="group"
               tabindex="0"
               aria-keyshortcuts="+ - f 0"
+              aria-describedby="diagram-keyboard-hint"
               aria-labelledby="svg-title svg-description"
             >
               <title id="svg-title">Área de visualización del diagrama de flujo</title>
@@ -348,7 +349,7 @@
                 <p>Montaje visual conectado a la simulación educativa</p>
               </div>
             </div>
-            <span class="pending-badge" id="circuit-status">Añade componentes o carga el circuito de ejemplo.</span>
+            <span class="pending-badge" id="circuit-status" role="status" aria-live="polite" aria-atomic="true">Añade componentes o carga el circuito de ejemplo.</span>
           </div>
           <div class="circuit-lab-content">
             <section class="circuit-assembly" aria-labelledby="circuit-assembly-heading">
@@ -362,11 +363,16 @@
                   <button class="tool-button" id="circuit-clear" type="button">Vaciar montaje</button>
                 </div>
               </div>
+              <div class="circuit-board-profile-control">
+                <label for="circuit-board-profile">Perfil de placa</label>
+                <select id="circuit-board-profile" class="circuit-select" aria-describedby="circuit-board-profile-notes"></select>
+                <div id="circuit-board-profile-notes" class="circuit-board-profile-notes" aria-live="polite"></div>
+              </div>
               <div class="circuit-canvas-scroll">
                 <svg
                   id="circuit-canvas"
                   class="circuit-canvas"
-                  viewBox="0 0 800 490"
+                  viewBox="0 0 800 520"
                   role="group"
                   aria-label="Montaje de Arduino y protoboard"
                 ></svg>

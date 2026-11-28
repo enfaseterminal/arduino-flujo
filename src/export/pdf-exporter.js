@@ -354,7 +354,7 @@ export async function exportPdf(
     await drawSvgSection(
       "Montaje electrónico",
       options.circuitSvg,
-      "Render del laboratorio · Arduino Uno, protoboard, componentes y conexiones",
+      `Render del laboratorio · ${options.boardProfile?.model ?? "Arduino Uno"}, protoboard, componentes y conexiones`,
     );
   }
 

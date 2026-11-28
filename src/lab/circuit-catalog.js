@@ -67,23 +67,71 @@ function componentDefinition(type) {
   return Object.hasOwn(COMPONENTS, type) ? COMPONENTS[type] : null;
 }
 
-const ARDUINO_TERMINALS = Object.freeze([
-  Object.freeze({ id: "D0", kind: "digital", number: 0, serial: "RX" }),
-  Object.freeze({ id: "D1", kind: "digital", number: 1, serial: "TX" }),
-  ...Array.from({ length: 12 }, (_unused, index) => Object.freeze({
-    id: `D${index + 2}`,
-    kind: "digital",
-    number: index + 2,
-  })),
-  ...Array.from({ length: 6 }, (_unused, index) => Object.freeze({
-    id: `A${index}`,
-    kind: "analog",
-    number: index,
-  })),
-  Object.freeze({ id: "5V", kind: "rail" }),
-  Object.freeze({ id: "GND", kind: "rail" }),
-]);
-const ARDUINO_TERMINAL_IDS = new Set(ARDUINO_TERMINALS.map(({ id }) => id));
+const BOARD_PROFILES = Object.freeze({
+  uno: Object.freeze({
+    id: "uno",
+    name: "Arduino Uno",
+    model: "Uno R3 · ATmega328P",
+    voltage: "5 V",
+    digitalPins: Object.freeze(Array.from({ length: 14 }, (_unused, index) => `D${index}`)),
+    analogPins: Object.freeze(Array.from({ length: 6 }, (_unused, index) => `A${index}`)),
+    analogOnlyPins: Object.freeze([]),
+    pwmPins: Object.freeze(["D3", "D5", "D6", "D9", "D10", "D11"]),
+    serialPins: Object.freeze({ D0: "RX", D1: "TX" }),
+    notes: Object.freeze([
+      "14 pines digitales (D0–D13), 6 entradas analógicas (A0–A5) y PWM en D3, D5, D6, D9, D10 y D11.",
+      "D0 (RX) y D1 (TX) comparten la serie hardware con USB; conectarlos puede interferir con Serial y con la carga del programa.",
+      "En este modelo didáctico A0–A5 se ofrecen como entradas analogRead; no se modelan como alias digitales D14–D19.",
+      "La vista del laboratorio es un pinout funcional, no una reproducción de la distribución física de la placa.",
+    ]),
+  }),
+  nano: Object.freeze({
+    id: "nano",
+    name: "Arduino Nano",
+    model: "Nano clásico · ATmega328P",
+    voltage: "5 V",
+    digitalPins: Object.freeze(Array.from({ length: 14 }, (_unused, index) => `D${index}`)),
+    analogPins: Object.freeze(Array.from({ length: 8 }, (_unused, index) => `A${index}`)),
+    analogOnlyPins: Object.freeze(["A6", "A7"]),
+    pwmPins: Object.freeze(["D3", "D5", "D6", "D9", "D10", "D11"]),
+    serialPins: Object.freeze({ D0: "RX", D1: "TX" }),
+    notes: Object.freeze([
+      "14 pines digitales (D0–D13), 8 entradas analógicas (A0–A7) y PWM en D3, D5, D6, D9, D10 y D11.",
+      "A6 y A7 son entradas analógicas solamente; no se aceptan como salidas digitales ni PWM.",
+      "D0 (RX) y D1 (TX) comparten la serie hardware; conectarlos puede interferir con la comunicación y con la carga del programa.",
+      "Este perfil representa el Nano clásico con ATmega328P; otras variantes de Nano pueden tener capacidades distintas.",
+      "La vista del laboratorio es un pinout funcional, no una reproducción de la distribución física de la placa.",
+    ]),
+  }),
+});
+
+function boardProfile(profileId = "uno") {
+  return Object.hasOwn(BOARD_PROFILES, profileId) ? BOARD_PROFILES[profileId] : null;
+}
+
+function arduinoTerminals(profileId = "uno") {
+  const profile = boardProfile(profileId);
+  if (!profile) return [];
+  return [
+    ...profile.digitalPins.map((id) => ({
+      id,
+      kind: "digital",
+      number: Number(id.slice(1)),
+      serial: profile.serialPins[id] ?? null,
+      pwm: profile.pwmPins.includes(id),
+      capabilities: ["digitalRead", "digitalWrite", ...(profile.pwmPins.includes(id) ? ["analogWrite"] : [])],
+    })),
+    ...profile.analogPins.map((id) => ({
+      id,
+      kind: "analog",
+      number: Number(id.slice(1)),
+      analogOnly: profile.analogOnlyPins.includes(id),
+      capabilities: ["analogRead"],
+    })),
+    { id: "5V", kind: "rail", capabilities: ["power"] },
+    { id: "GND", kind: "rail", capabilities: ["ground"] },
+  ];
+}
 
 export function isComponentType(type) {
   return Object.hasOwn(COMPONENTS, type);
@@ -103,12 +151,25 @@ export function hasValidComponentProperties(type, properties) {
   return componentDefinition(type)?.validateProperties(properties) ?? false;
 }
 
-export function isArduinoTerminal(id) {
-  return ARDUINO_TERMINAL_IDS.has(id);
+export function getBoardProfiles() {
+  return Object.values(BOARD_PROFILES).map((profile) => structuredClone(profile));
 }
 
-export function getArduinoTerminals() {
-  return ARDUINO_TERMINALS.map((item) => ({ ...item }));
+export function getBoardProfile(profileId = "uno") {
+  const profile = boardProfile(profileId);
+  return profile ? structuredClone(profile) : null;
+}
+
+export function isArduinoTerminal(id, profileId = "uno") {
+  return arduinoTerminals(profileId).some((item) => item.id === id);
+}
+
+export function getArduinoTerminals(profileId = "uno") {
+  return arduinoTerminals(profileId).map((item) => ({ ...item, capabilities: [...item.capabilities] }));
+}
+
+export function hasBoardPinCapability(pin, capability, profileId = "uno") {
+  return arduinoTerminals(profileId).some((item) => item.id === pin && item.capabilities.includes(capability));
 }
 
 export const resistorValues = [...RESISTOR_VALUES];

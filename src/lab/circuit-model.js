@@ -1,5 +1,6 @@
 import {
   createDefaultComponentProperties,
+  getBoardProfile,
   getArduinoTerminals,
   getComponentTerminals,
   hasValidComponentProperties,
@@ -12,15 +13,6 @@ const STORAGE_KEY = "arduino-flowchart-circuit";
 const CIRCUIT_VERSION = 2;
 const LEGACY_CIRCUIT_VERSION = 1;
 const MAX_HISTORY = 30;
-const DIGITAL_PINS = new Set(getArduinoTerminals()
-  .filter((terminal) => terminal.kind === "digital")
-  .map((terminal) => terminal.id));
-const ANALOG_PINS = new Set(getArduinoTerminals()
-  .filter((terminal) => terminal.kind === "analog")
-  .map((terminal) => terminal.id));
-const RAILS = new Set(getArduinoTerminals()
-  .filter((terminal) => terminal.kind === "rail")
-  .map((terminal) => terminal.id));
 const RESISTOR_COLORS = [
   ["negro", "#252525"],
   ["marrón", "#8b4b28"],
@@ -54,6 +46,12 @@ function componentTerminalIds(component) {
   return getComponentTerminals(component.type).map(({ id }) => id);
 }
 
+function pinsFor(circuit, kind) {
+  return getArduinoTerminals(circuit.boardProfile ?? "uno")
+    .filter((terminal) => terminal.kind === kind)
+    .map(({ id }) => id);
+}
+
 function cloneValue(value) {
   return structuredClone(value);
 }
@@ -63,6 +61,7 @@ function statesEqual(first, second) {
 }
 
 function historyChangeType(before, after) {
+  if (before.boardProfile !== after.boardProfile) return "topology";
   if (!statesEqual(before.components, after.components)) return "topology";
   const wireEndpoints = (wires) => wires.map(({ id, from, to }) => ({ id, from, to }));
   if (!statesEqual(wireEndpoints(before.wires), wireEndpoints(after.wires))) return "topology";
@@ -94,6 +93,7 @@ function normalizedCircuit(value) {
   if (
     !value ||
     ![LEGACY_CIRCUIT_VERSION, CIRCUIT_VERSION].includes(value.version) ||
+    (value.boardProfile !== undefined && !getBoardProfile(value.boardProfile)) ||
     !Array.isArray(value.components) ||
     !Array.isArray(value.wires) ||
     value.components.some((component) =>
@@ -152,6 +152,7 @@ function normalizedCircuit(value) {
   });
   return {
     version: CIRCUIT_VERSION,
+    boardProfile: value.boardProfile ?? "uno",
     components,
     visual: { positions },
     wires: value.wires.map((wire) => cloneValue(wire)),
@@ -161,7 +162,7 @@ function normalizedCircuit(value) {
 function endpointExists(circuit, endpoint) {
   if (typeof endpoint !== "string" || !endpoint) return false;
   if (endpoint.startsWith("arduino:")) {
-    return isArduinoTerminal(endpoint.slice("arduino:".length));
+    return isArduinoTerminal(endpoint.slice("arduino:".length), circuit.boardProfile ?? "uno");
   }
   const separator = endpoint.lastIndexOf(":");
   if (separator < 1) return false;
@@ -169,7 +170,7 @@ function endpointExists(circuit, endpoint) {
   return Boolean(component && componentTerminalIds(component).includes(endpoint.slice(separator + 1)));
 }
 
-const PROJECT_CIRCUIT_KEYS = new Set(["version", "components", "visual", "wires"]);
+const PROJECT_CIRCUIT_KEYS = new Set(["version", "boardProfile", "components", "visual", "wires"]);
 const PROJECT_COMPONENT_PROPERTIES = {
   led: ["color"], rgbLed: [], resistor: ["ohms", "tolerance", "bandCount"], button: ["pressed"],
   potentiometer: ["value"], photoresistor: ["value"], servo: ["angle"], irSensor: ["detected"],
@@ -181,6 +182,7 @@ export function validateCircuitProjectState(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
       Object.keys(value).some((key) => !PROJECT_CIRCUIT_KEYS.has(key)) ||
       value.version !== CIRCUIT_VERSION || !Array.isArray(value.components) ||
+      (value.boardProfile !== undefined && !getBoardProfile(value.boardProfile)) ||
       value.components.length > 12 || !Array.isArray(value.wires) ||
       !value.visual || typeof value.visual !== "object" || Array.isArray(value.visual) ||
       !value.visual.positions || typeof value.visual.positions !== "object" || Array.isArray(value.visual.positions)) fail();
@@ -306,7 +308,7 @@ export function resistorBands(ohms, bandCount = 4, tolerance = 5) {
 }
 
 export function createCircuitModel(storage = globalThis.localStorage, onError = () => {}) {
-  let state = { version: CIRCUIT_VERSION, components: [], visual: { positions: {} }, wires: [] };
+  let state = { version: CIRCUIT_VERSION, boardProfile: "uno", components: [], visual: { positions: {} }, wires: [] };
   let nextId = 1;
   const past = [];
   const future = [];
@@ -320,7 +322,7 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
         if (!parsed) onError(new Error("El montaje guardado no es compatible; se ha iniciado un laboratorio vacío."));
         else {
           state = parsed;
-          if (savedCircuit.version !== CIRCUIT_VERSION) persist("visual");
+          if (savedCircuit.version !== CIRCUIT_VERSION || !savedCircuit.boardProfile) persist("visual");
           nextId = nextAvailableId(state);
         }
       }
@@ -401,6 +403,27 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
 
   return {
     getState: snapshot,
+    getBoardProfile() {
+      return getBoardProfile(state.boardProfile);
+    },
+    getPinCapabilities(pin) {
+      return getArduinoTerminals(state.boardProfile).find(({ id }) => id === String(pin).toUpperCase())?.capabilities ?? [];
+    },
+    setBoardProfile(profileId) {
+      const profile = getBoardProfile(profileId);
+      if (!profile) throw new TypeError("Selecciona un perfil de placa compatible.");
+      if (profileId === state.boardProfile) return { state: snapshot(), changeType: "visual" };
+      const unavailablePins = [...new Set(state.wires.flatMap(({ from, to }) => [from, to]
+        .filter((endpoint) => endpoint.startsWith("arduino:") &&
+          !isArduinoTerminal(endpoint.slice("arduino:".length), profileId))
+        .map((endpoint) => endpoint.slice("arduino:".length))))];
+      if (unavailablePins.length) {
+        throw new RangeError(`${profile.name} no dispone de ${unavailablePins.join(", ")}; cambia o elimina esas conexiones antes de cambiar de perfil.`);
+      }
+      const before = snapshot();
+      state.boardProfile = profileId;
+      return update("topology", before);
+    },
     replaceState(nextState) {
       const replacement = validateCircuitProjectState(nextState);
       const before = snapshot();
@@ -442,7 +465,7 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
     getServoForPin(pin) {
       const normalizedPin = String(pin).toUpperCase().replace(/^D/, "");
       const endpoint = `arduino:D${normalizedPin}`;
-      if (!DIGITAL_PINS.has(endpoint.slice("arduino:".length))) return null;
+      if (!pinsFor(state, "digital").includes(endpoint.slice("arduino:".length))) return null;
       return state.components.find((component) => component.type === "servo" &&
         wireReachable(state, `${component.id}:signal`, endpoint) &&
         wireReachable(state, `${component.id}:vcc`, "arduino:5V") &&
@@ -539,18 +562,21 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
     },
     loadDemo() {
       const before = snapshot();
-      state = createDemoCircuit();
+      state = createDemoCircuit(state.boardProfile);
       nextId = Math.max(nextId, 10);
       return update("topology", before);
     },
     clear() {
       const before = snapshot();
-      state = { version: CIRCUIT_VERSION, components: [], visual: { positions: {} }, wires: [] };
+      state = { version: CIRCUIT_VERSION, boardProfile: before.boardProfile, components: [], visual: { positions: {} }, wires: [] };
       return update("topology", before);
     },
     getEndpoints() {
       const endpoints = [
-        ...getArduinoTerminals().map(({ id: pin }) => ({ id: `arduino:${pin}`, label: `Arduino ${pin}` })),
+        ...getArduinoTerminals(state.boardProfile).map(({ id: pin, serial, pwm, analogOnly }) => ({
+          id: `arduino:${pin}`,
+          label: `Arduino ${pin}${serial ? ` · ${serial}` : ""}${pwm ? " · PWM" : ""}${analogOnly ? " · solo entrada analógica" : ""}`,
+        })),
       ];
       for (const component of state.components) {
         for (const terminal of componentTerminalIds(component)) {
@@ -576,7 +602,7 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
         }
         if (component.type === "led") {
           const edges = circuitGraph(state, createInitialInputs());
-          const wiredToPin = [...DIGITAL_PINS].some((pin) =>
+          const wiredToPin = pinsFor(state, "digital").some((pin) =>
             graphPath(edges, `arduino:${pin}`, `${component.id}:anode`, true),
           );
           if (!wiredToPin || !graphPath(edges, `${component.id}:cathode`, "arduino:GND")) {
@@ -584,39 +610,39 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
           }
         } else if (component.type === "rgbLed") {
           const commonGround = wireReachable(state, `${component.id}:cathode`, "arduino:GND");
-          const channelsWired = ["red", "green", "blue"].every((channel) => [...DIGITAL_PINS].some((pin) =>
+          const channelsWired = ["red", "green", "blue"].every((channel) => pinsFor(state, "digital").some((pin) =>
             graphPath(circuitGraph(state, createInitialInputs()), `arduino:${pin}`, `${component.id}:${channel}`, true),
           ));
           if (!commonGround || !channelsWired) warnings.push(`${component.id}: conecta cada canal R, G y B a una salida a través de una resistencia y el común a GND.`);
         } else if (component.type === "button") {
           const first = `${component.id}:contact1`;
           const second = `${component.id}:contact2`;
-          const endpoints = [...DIGITAL_PINS].map((pin) => `arduino:${pin}`);
-          const rails = [...RAILS].map((rail) => `arduino:${rail}`);
+          const endpoints = pinsFor(state, "digital").map((pin) => `arduino:${pin}`);
+          const rails = pinsFor(state, "rail").map((rail) => `arduino:${rail}`);
           const valid = endpoints.some((pin) =>
             (wireReachable(state, first, pin) && rails.some((rail) => wireReachable(state, second, rail))) ||
             (wireReachable(state, second, pin) && rails.some((rail) => wireReachable(state, first, rail))),
           );
           if (!valid) warnings.push(`${component.id}: conecta un contacto a un pin digital y el otro a GND o 5V.`);
         } else if (component.type === "irSensor") {
-          const signalConnected = [...DIGITAL_PINS].some((pin) => wireReachable(state, `${component.id}:signal`, `arduino:${pin}`));
+          const signalConnected = pinsFor(state, "digital").some((pin) => wireReachable(state, `${component.id}:signal`, `arduino:${pin}`));
           const powered = wireReachable(state, `${component.id}:vcc`, "arduino:5V") && wireReachable(state, `${component.id}:gnd`, "arduino:GND");
           if (!signalConnected || !powered) warnings.push(`${component.id}: conecta VCC a 5V, GND a GND y OUT a un pin digital.`);
         } else if (component.type === "potentiometer") {
-          const valid = [...ANALOG_PINS].some((pin) =>
+          const valid = pinsFor(state, "analog").some((pin) =>
             this.readInput("analogRead", pin.slice(1), {}, createInitialInputs()).known,
           );
-          if (!valid) warnings.push(`${component.id}: conecta el wiper a A0–A5 y los extremos a 5V y GND.`);
+          if (!valid) warnings.push(`${component.id}: conecta el wiper a una entrada analógica disponible en ${getBoardProfile(state.boardProfile).name} y los extremos a 5V y GND.`);
         } else if (component.type === "photoresistor") {
           const signal = `${component.id}:signal`;
           const powered = wireReachable(state, `${component.id}:vcc`, "arduino:5V") &&
             wireReachable(state, `${component.id}:gnd`, "arduino:GND");
-          const analogConnected = [...ANALOG_PINS].some((pin) => wireReachable(state, signal, `arduino:${pin}`));
+          const analogConnected = pinsFor(state, "analog").some((pin) => wireReachable(state, signal, `arduino:${pin}`));
           if (!powered || !analogConnected) {
-            warnings.push(`${component.id}: conecta VCC a 5V, GND a GND y AO a una entrada A0–A5.`);
+            warnings.push(`${component.id}: conecta VCC a 5V, GND a GND y AO a una entrada analógica disponible en ${getBoardProfile(state.boardProfile).name}.`);
           }
         } else if (component.type === "servo") {
-          const signalConnected = [...DIGITAL_PINS].some((pin) =>
+          const signalConnected = pinsFor(state, "digital").some((pin) =>
             wireReachable(state, `${component.id}:signal`, `arduino:${pin}`),
           );
           const powered = wireReachable(state, `${component.id}:vcc`, "arduino:5V") &&
@@ -627,6 +653,12 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
         }
       }
       for (const wire of state.wires) {
+        for (const endpoint of [wire.from, wire.to]) {
+          if (endpoint.startsWith("arduino:") &&
+              !isArduinoTerminal(endpoint.slice("arduino:".length), state.boardProfile)) {
+            warnings.push(`${wire.id}: el pin ${endpoint.slice("arduino:".length)} no está disponible en ${getBoardProfile(state.boardProfile)?.name ?? state.boardProfile}.`);
+          }
+        }
         if (!endpointExists(state, wire.from) || !endpointExists(state, wire.to)) {
           warnings.push(`${wire.id}: conexión desconocida conservada (${wire.from} ↔ ${wire.to}).`);
         }
@@ -637,7 +669,7 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
       const edges = circuitGraph(state, inputs);
       const result = {};
       for (const component of state.components.filter((item) => item.type === "led")) {
-        const connectedPin = [...DIGITAL_PINS].find((pin) => {
+        const connectedPin = pinsFor(state, "digital").find((pin) => {
           const digitalPin = pin.slice(1);
           const pinState = pinStates[digitalPin];
           return pinState?.mode === "OUTPUT" &&
@@ -662,7 +694,7 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
         const commonGround = graphPath(edges, `${component.id}:cathode`, "arduino:GND");
         const channels = {};
         for (const channel of ["red", "green", "blue"]) {
-          const pin = [...DIGITAL_PINS].find((candidate) => {
+          const pin = pinsFor(state, "digital").find((candidate) => {
             const stateForPin = pinStates[candidate.slice(1)];
             return stateForPin && graphPath(edges, `arduino:${candidate}`, `${component.id}:${channel}`, true);
           });
@@ -678,7 +710,7 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
         const endpoint = digitalEndpoint(pin);
         const pinNumber = endpoint.slice("arduino:D".length);
         const mode = pinStates[pinNumber]?.mode;
-        if (!DIGITAL_PINS.has(endpoint.slice("arduino:".length)) || !["INPUT", "INPUT_PULLUP"].includes(mode)) {
+        if (!pinsFor(state, "digital").includes(endpoint.slice("arduino:".length)) || !["INPUT", "INPUT_PULLUP"].includes(mode)) {
           return { known: false, reason: `El pin ${pin} no está configurado como entrada digital.` };
         }
         for (const button of state.components.filter((item) => item.type === "button")) {
@@ -704,7 +736,7 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
       }
       if (callName === "analogRead") {
         const endpoint = `arduino:${String(pin).toUpperCase()}`;
-        if (!ANALOG_PINS.has(endpoint.slice("arduino:".length))) {
+        if (!pinsFor(state, "analog").includes(endpoint.slice("arduino:".length))) {
           return { known: false, reason: `El pin analógico ${pin} no es válido.` };
         }
         for (const potentiometer of state.components.filter((item) => item.type === "potentiometer")) {
@@ -734,12 +766,13 @@ export function createCircuitModel(storage = globalThis.localStorage, onError = 
   };
 }
 
-export function createDemoCircuit() {
+export function createDemoCircuit(boardProfile = "uno") {
   const resistor = createComponent("component-1", "resistor");
   const led = createComponent("component-2", "led");
   led.properties.color = "rojo";
   return {
     version: CIRCUIT_VERSION,
+    boardProfile,
     components: [resistor, led],
     visual: {
       positions: {
